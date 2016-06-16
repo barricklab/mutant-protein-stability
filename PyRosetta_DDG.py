@@ -53,7 +53,7 @@ parser.add_argument("-l", "--log", help="Log file to be appended to with run inf
 parser.add_argument("-p", "--prefix", help="Output file prefix", default=str(datetime.datetime.now()).replace(" ", "_").replace(":", "/"))
 parser.add_argument("-rep", "--replicates", help="how many replicate energy minimizations of the reference pdb should be attempted", default=multiprocessing.cpu_count(), type=int)
 parser.add_argument("-i", "--intermediates", help="store intermediate pdb files at completion of rotamer optimization", action='store_true')
-parser.add_argument("-n", "--number", help="number of optimized structures to compare. If float will take top %% of values, if integer will use that many best values, use 0 to take all optimized structures", default=1, type=float)
+parser.add_argument("-n", "--number", help="number of optimized structures to compare. If float will take top %s of values, if integer will use that many best values, use 0 to take all optimized structures" % default.replace(r"%", r"%%"), default=1, type=float)
 parser.add_argument("-s", "--score_function", help="Score function to be used", default=rosetta.get_fa_scorefxn())
 
 parser.add_argument("--max", help="how many moves should each replicate attempt at maximum. Value of 0 will disable test.", default=1000, type=int)

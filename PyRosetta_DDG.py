@@ -50,7 +50,7 @@ parser = argparse.ArgumentParser(description="take pdb file, optimize it to give
 parser.add_argument("-ref", "--reference", help="pdb file", required=True)
 parser.add_argument("-o", "--output", help="Output directory for files (will be created if it doesn't exist).", default=os.curdir)
 parser.add_argument("-l", "--log", help="Log file to be appended to with run information.", default="PyRosetta_DDG.py.log.txt")
-parser.add_argument("-p", "--prefix", help="Output file prefix", default=str(datetime.datetime.now()).replace(" ", "_").replace(":", "/"))
+parser.add_argument("-p", "--prefix", help="Output file prefix", default=str(datetime.datetime.now()).replace(" ", "_").replace(":", "."))
 parser.add_argument("-rep", "--replicates", help="how many replicate energy minimizations of the reference pdb should be attempted", default=multiprocessing.cpu_count(), type=int)
 parser.add_argument("-i", "--intermediates", help="store intermediate pdb files at completion of rotamer optimization", action='store_true')
 parser.add_argument("-n", "--number", help="number of optimized structures to compare. If float, will take top %% of values, if integer, will use that many best values, use 0 to take all optimized structures", default=1, type=float)

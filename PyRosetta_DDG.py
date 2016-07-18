@@ -17,7 +17,6 @@
 ######################################## 1 ########################################
 
 
-
 import rosetta
 # from rosetta import init, pose_from_pdb, get_fa_scorefxn, standard_packer_task, Pose, MoveMap, RotamerTrialsMinMover, MinMover # TODO only import what you need to lower loading time on tacc ... does not appear to increase speed
 import toolbox
@@ -391,38 +390,38 @@ def minimize_energy(proc, pdb_filename=None, failures=args.failures, max_attempt
     return scores[-1]  # return best score for downstream applications
 
 
-# def ddg_score(proc, sref_pose, sref_packer, smut_pose, smut_packer, sminimizer, s_scorefxn=args.score_function):
-#     """
-#     multiprocessing attempt
-#     :param proc:
-#     :param sref_pose:
-#     :param sref_packer:
-#     :param smut_pose:
-#     :param smut_packer:
-#     :param sminimizer:
-#     :param s_scorefxn:
-#     :return:
-#     """
-#     if args.testing:  # need to set constant seed, but want different seeds for each process
-#         rosetta.init(extra_options="-constant_seed -jran %i" % proc)
-#     else:  # need to reinitialize to get random seed, but account for potential of multi processes to start at same time
-#         rosetta.init(extra_options="-use_time_as_seed -seed_offset %i" % proc)
-#
-#     # Make sure that the sequence has actually mutated, and that only 1 AA has changed
-#     sref_packer.apply(sref_pose)
-#     smut_packer.apply(smut_pose)
-#
-#     differences = 0
-#     for i, b in enumerate(sref_pose.sequence()):
-#         if b == smut_pose.sequence()[i]:
-#             continue
-#         differences += 1
-#     assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, sref_pose.sequence(), smut_pose.sequence())
-#
-#     sminimizer(sref_pose)
-#     sminimizer(smut_pose)
-#
-#     return s_scorefxn(sref_pose) - s_scorefxn(smut_pose)
+def ddg_score(proc, sref_pose, sref_packer, smut_pose, smut_packer, sminimizer, s_scorefxn=args.score_function):
+    """
+    multiprocessing attempt
+    :param proc:
+    :param sref_pose:
+    :param sref_packer:
+    :param smut_pose:
+    :param smut_packer:
+    :param sminimizer:
+    :param s_scorefxn:
+    :return:
+    """
+    if args.testing:  # need to set constant seed, but want different seeds for each process
+        rosetta.init(extra_options="-constant_seed -jran %i" % proc)
+    else:  # need to reinitialize to get random seed, but account for potential of multi processes to start at same time
+        rosetta.init(extra_options="-use_time_as_seed -seed_offset %i" % proc)
+
+    # Make sure that the sequence has actually mutated, and that only 1 AA has changed
+    sref_packer.apply(sref_pose)
+    smut_packer.apply(smut_pose)
+
+    differences = 0
+    for i, b in enumerate(sref_pose.sequence()):
+        if b == smut_pose.sequence()[i]:
+            continue
+        differences += 1
+    assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, sref_pose.sequence(), smut_pose.sequence())
+
+    sminimizer(sref_pose)
+    sminimizer(smut_pose)
+
+    return s_scorefxn(sref_pose) - s_scorefxn(smut_pose)
 
 
 def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=scorefxn):
@@ -475,8 +474,10 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
         #     print "THIS HAPPENED", i, mutant_position
 
     # apply the mutation and pack nearby residues
-    mut_packer = rosetta.PackRotamersMover(mr_scorefxn, mut_task)
-    ref_packer = rosetta.PackRotamersMover(mr_scorefxn, ref_task)
+    global ddg_mut_packer
+    global ddg_ref_packer
+    ddg_mut_packer = rosetta.PackRotamersMover(mr_scorefxn, mut_task)
+    ddg_ref_packer = rosetta.PackRotamersMover(mr_scorefxn, ref_task)
 
 
     movemap = rosetta.MoveMap()
@@ -487,43 +488,80 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
     min_mover.score_function(mr_scorefxn)
     min_mover.min_type('dfpmin_armijo_nonmonotone')
 
-    ddg_results = []
+    # attempt to incoproate multiprocessing
+    global r_pose
+    global m_pose
+    global ddg_sref_packer
     r_pose = rosetta.Pose()
     m_pose = rosetta.Pose()
+    r_pose.assign(reference_pose)
+    m_pose.assign(mut_pose)
+    ddg_sref_packer = ref_packer
 
-    while len(ddg_results) < args.comparisons:
-        r_pose.assign(reference_pose)
-        m_pose.assign(mut_pose)
+    p = multiprocessing.Pool(multiprocessing.cpu_count())
 
-        ref_packer.apply(r_pose)
-        mut_packer.apply(m_pose)
+    #fx_args = partial(ddg_score, sref_pose=reference_pose, sref_packer=ref_packer, smut_pose=mut_pose, smut_packer=mut_packer, sminimizer=min_mover)
+    #fx_args = partial(ddg_score2, sref_packer=ref_packer, smut_packer=mut_packer, sminimizer=min_mover)
+    #fx_args = partial(ddg_score2, sminimizer=min_mover)
+    results = p.map(ddg_score2, xrange(args.comparisons))
 
-        # Make sure that the sequence has actually mutated, and that only 1 AA has changed
-        differences = 0
-        for i, b in enumerate(r_pose.sequence()):
-            if b == m_pose.sequence()[i]:
-                continue
-            differences += 1
-        assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, r_pose.sequence(), m_pose.sequence())
+    return results
 
-        min_mover.apply(r_pose)
-        min_mover.apply(m_pose)
+    # ddg_results = []
+    # r_pose = rosetta.Pose()
+    # m_pose = rosetta.Pose()
 
-        ddg_results.append(mr_scorefxn(r_pose) - mr_scorefxn(m_pose))
-
-    return ddg_results
-
-#attempt to incoproate multiprocessing
-    # p = multiprocessing.Pool(multiprocessing.cpu_count())
-    # fx_args = partial(ddg_score, sref_pose=reference_pose, sref_packer=ref_packer, smut_pose=mut_pose, smut_packer=mut_packer, sminimizer=min_mover)
-    # print "partial constructed"
-    # results = p.map(fx_args, xrange(args.comparisons))
+    # # Non-multiprocessing working block
+    # while len(ddg_results) < args.comparisons:
+    #     r_pose.assign(reference_pose)
+    #     m_pose.assign(mut_pose)
     #
-    # return results
+    #     ref_packer.apply(r_pose)
+    #     mut_packer.apply(m_pose)
+    #
+    #     # Make sure that the sequence has actually mutated, and that only 1 AA has changed
+    #     differences = 0
+    #     for i, b in enumerate(r_pose.sequence()):
+    #         if b == m_pose.sequence()[i]:
+    #             continue
+    #         differences += 1
+    #     assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, r_pose.sequence(), m_pose.sequence())
+    #
+    #     min_mover.apply(r_pose)
+    #     min_mover.apply(m_pose)
+    #
+    #     ddg_results.append(mr_scorefxn(r_pose) - mr_scorefxn(m_pose))
+    #
+    # return ddg_results
 
 
 
 
+def ddg_score2(proc, s_scorefxn=args.score_function):
+    if args.testing:  # need to set constant seed, but want different seeds for each process
+        rosetta.init(extra_options="-constant_seed -jran %i" % proc)
+    else:  # need to reinitialize to get random seed, but account for potential of multi processes to start at same time
+        rosetta.init(extra_options="-use_time_as_seed -seed_offset %i" % proc)
+    print r_pose
+    print m_pose
+
+    sref_packer = ddg_sref_packer
+
+    # Make sure that the sequence has actually mutated, and that only 1 AA has changed
+    sref_packer.apply(reference_pose)
+    smut_packer.apply(mut_pose)
+
+    differences = 0
+    for i, b in enumerate(sref_pose.sequence()):
+        if b == smut_pose.sequence()[i]:
+            continue
+        differences += 1
+    assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, sref_pose.sequence(), smut_pose.sequence())
+
+    sminimizer(sref_pose)
+    sminimizer(smut_pose)
+
+    return s_scorefxn(sref_pose) - s_scorefxn(smut_pose)
 
 
 if __name__ == '__main__':
@@ -591,13 +629,15 @@ if __name__ == '__main__':
     possible_best = rosetta.Pose()
     optimized_refs_to_mutate = []
 
+    file_loc = os.getcwd() + "/" + args.output.rstrip("/") + "/"
     for files in os.listdir(args.output.rstrip("/") + "/"):
         if re.search(args.prefix + "_Optimized_Replicate_", files):  # ignore files in directory that are not the output of the full optimization script
-            rosetta.pose_from_pdb(possible_best, files)  # will produce slightly different values if pdb file not written/read back in
+            rosetta.pose_from_pdb(possible_best, file_loc + files)  # will produce slightly different values if pdb file not written/read back in.
             log("\t".join(map(str, [files, scorefxn(possible_best)])))
             if scorefxn(possible_best) in optimized_scores:
                 optimized_refs_to_mutate.append(files)
     log("\nThe following %i optimized reference file(s) will be mutated and scored:\n\t" % len(optimized_refs_to_mutate) + "\n\t".join(map(str, optimized_refs_to_mutate)))
+    assert len(optimized_refs_to_mutate) > 0, "No references selected for mutation and scoring. This should not happen. Previously was caused by slight differences in reading file back in after writing. This was believed to have been corrected. If recurring, consider setting maximum score to consider and keeping all files with at least that score"
 
     # 7. Mutation and delta delta G stuff
     log("\nMutation and Energy minimization beginning...")
@@ -608,7 +648,7 @@ if __name__ == '__main__':
         for ref in optimized_refs_to_mutate:
 
             optimized_pose = rosetta.Pose()
-            rosetta.pose_from_pdb(optimized_pose, ref)
+            rosetta.pose_from_pdb(optimized_pose, file_loc + ref)
             assert optimized_pose.is_fullatom(), "ddg function/mutation can only work with fullatom poses. If this triggers remember this is adapted from # 1 # and might have not been necessary as an assertion. The file that caused the problem was:\n\t%s" % ref
 
             all_deltas = ddg(optimized_pose, mutations[mutation])

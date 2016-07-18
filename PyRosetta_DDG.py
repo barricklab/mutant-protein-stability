@@ -496,7 +496,7 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
     m_pose = rosetta.Pose()
     r_pose.assign(reference_pose)
     m_pose.assign(mut_pose)
-    ddg_sref_packer = ref_packer
+    ddg_sref_packer = ddg_ref_packer
 
     p = multiprocessing.Pool(multiprocessing.cpu_count())
 

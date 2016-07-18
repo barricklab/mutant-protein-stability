@@ -612,6 +612,8 @@ if __name__ == '__main__':
     # 5. multiprocessing block to minimize energy
     p = multiprocessing.Pool(multiprocessing.cpu_count())
     optimized_scores = p.map(minimize_energy, xrange(args.replicates))
+    p.close()  # potentially needed to avoid memory error?
+    p.join()  # potentially needed to avoid memory error?
     optimized_scores = sorted(optimized_scores)  # final scores sorted for easier stat determination and ref assignment
 
     log("\nReference optimization complete with the following statistics:\nTotal Replicates:\t%i\nLowest Score:\t%f\nLowest Score Count:\t%i\nHighest Score:\t%f\nAverage Score:\t%f\nStd Dev:\t%f\nAll Scores:" % (args.replicates, min(optimized_scores), optimized_scores.count(min(optimized_scores)), max(optimized_scores), numpy.mean(optimized_scores), numpy.std(optimized_scores)))

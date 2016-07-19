@@ -492,11 +492,15 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
     global r_pose
     global m_pose
     global ddg_sref_packer
+    global ddg_smut_packer
+    global sminimizer
     r_pose = rosetta.Pose()
     m_pose = rosetta.Pose()
     r_pose.assign(reference_pose)
     m_pose.assign(mut_pose)
     ddg_sref_packer = ddg_ref_packer
+    ddg_smut_packer = ddg_mut_packer
+    sminimizer = min_mover
 
     p = multiprocessing.Pool(multiprocessing.cpu_count())
 
@@ -542,26 +546,31 @@ def ddg_score2(proc, s_scorefxn=args.score_function):
         rosetta.init(extra_options="-constant_seed -jran %i" % proc)
     else:  # need to reinitialize to get random seed, but account for potential of multi processes to start at same time
         rosetta.init(extra_options="-use_time_as_seed -seed_offset %i" % proc)
-    print r_pose
-    print m_pose
 
     sref_packer = ddg_sref_packer
+    smut_packer = ddg_smut_packer
+
+    ref_pose_trial = rosetta.Pose()
+    mut_pose_trial = rosetta.Pose()
+
+    ref_pose_trial.assign(r_pose)
+    mut_pose_trial.assign(m_pose)
 
     # Make sure that the sequence has actually mutated, and that only 1 AA has changed
-    sref_packer.apply(reference_pose)
-    smut_packer.apply(mut_pose)
+    sref_packer.apply(ref_pose_trial)
+    smut_packer.apply(mut_pose_trial)
 
     differences = 0
-    for i, b in enumerate(sref_pose.sequence()):
-        if b == smut_pose.sequence()[i]:
+    for i, b in enumerate(ref_pose_trial.sequence()):
+        if b == mut_pose_trial.sequence()[i]:
             continue
         differences += 1
-    assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, sref_pose.sequence(), smut_pose.sequence())
+    assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, ref_pose_trial.sequence(), mut_pose_trial.sequence())
 
-    sminimizer(sref_pose)
-    sminimizer(smut_pose)
+    sminimizer(ref_pose_trial)
+    sminimizer(mut_pose_trial)
 
-    return s_scorefxn(sref_pose) - s_scorefxn(smut_pose)
+    return s_scorefxn(ref_pose_trial) - s_scorefxn(mut_pose_trial)
 
 
 if __name__ == '__main__':

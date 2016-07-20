@@ -509,6 +509,9 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
     #fx_args = partial(ddg_score2, sminimizer=min_mover)
     results = p.map(ddg_score2, xrange(args.comparisons))
 
+    p.close()  # potentially needed to avoid memory error?
+    p.join()  # potentially needed to avoid memory error?
+
     return results
 
     # ddg_results = []
@@ -539,8 +542,6 @@ def ddg(reference_pose, mutation_info, pack_radius=args.distance, mr_scorefxn=sc
     # return ddg_results
 
 
-
-
 def ddg_score2(proc, s_scorefxn=args.score_function):
     if args.testing:  # need to set constant seed, but want different seeds for each process
         rosetta.init(extra_options="-constant_seed -jran %i" % proc)
@@ -567,8 +568,8 @@ def ddg_score2(proc, s_scorefxn=args.score_function):
         differences += 1
     assert differences == 1, "%i differences in the before and after sequence. if 0, mutation was not made, if more than 1 multiple bases mutated.\nBefore:\n%s\nAfter:\n%s" % (differences, ref_pose_trial.sequence(), mut_pose_trial.sequence())
 
-    sminimizer(ref_pose_trial)
-    sminimizer(mut_pose_trial)
+    sminimizer.apply(ref_pose_trial)
+    sminimizer.apply(mut_pose_trial)
 
     return s_scorefxn(ref_pose_trial) - s_scorefxn(mut_pose_trial)
 

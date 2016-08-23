@@ -9,7 +9,7 @@ from mpi4py import MPI
 
 def _main(args):
 
-    (start_pdb, n_start_poses, n_pack, n_min, restrict_to_chain) = None
+    (start_pdb, n_start_poses, n_pack, n_min, restrict_to_chain) = (None,None,None,None,None)
 
     if len(args) not in (4,5):
         print "usage: <start_pdb> <n_start_poses> <n_pack> <n_min> [<restrict_to_chain>]"

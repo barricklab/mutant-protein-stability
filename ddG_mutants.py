@@ -8,14 +8,14 @@ from mpi4py import MPI
 
 def _main(args):
     
-    (start_pose_pdbs_dir, residues_str, AAs_str, nreplicates,restrict_to_chain) = (None,None,None,None,None)
-    if len(args) not in (4,5):
-        print "usage: <start_pose_pdbs_dir> <residue1[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
+    (start_pose_pdbs_dir, database, residues_str, AAs_str, nreplicates,restrict_to_chain) = (None,None,None,None,None,None)
+    if len(args) not in (5,6):
+        print "usage: <start_pose_pdbs_dir> <residue1[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <database> <restrict_to_chain>"
         sys.exit(0)
-    elif len(args) == 4:
-        (start_pose_pdbs_dir, residues_str, AAs_str, nreplicates) = args
     elif len(args) == 5:
-        (start_pose_pdbs_dir, residues_str, AAs_str, nreplicates,restrict_to_chain) = args
+        (start_pose_pdbs_dir,database, residues_str, AAs_str, nreplicates) = args
+    elif len(args) == 6:
+        (start_pose_pdbs_dir,database,  residues_str, AAs_str, nreplicates,restrict_to_chain) = args
 
         
 
@@ -47,7 +47,7 @@ def _main(args):
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    rosetta_options="-ignore_unrecognized_res False -database /work/02984/cwbrown/Data/Rosetta/database_w_ncaas/pyrosetta_database"
+    rosetta_options="-ignore_unrecognized_res False -database=%s" % (database,)
 
     start_pose_pdbs = [start_pose_pdbs_dir + "/" + x for x in os.listdir(start_pose_pdbs_dir) if len(x) > 4 and x[-4:] == '.pdb']
     

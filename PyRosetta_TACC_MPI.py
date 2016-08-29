@@ -9,7 +9,7 @@ nsAAs = ['3IY','NOY','AZF','A69','B36'] # A69 = 3-aminotyrosine, B36 = 5-hydroxy
 
 class MutagenesisExperimentRunner():
 
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,max_pack_rounds=25,restrict_to_chain=None):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=None,max_pack_rounds=25):
 
         self.start_pose_pdbs = start_pose_pdbs
         self.rosetta_init_options = rosetta_init_options
@@ -190,33 +190,35 @@ class AbstractPackerJob():
                     mv.apply(pose)
         
         return apply_compound_mover
+
+    def make_packmin_mover(self,pose,packertask,minmover):
         """
         Build a TrialMover with n_packing_steps RotamerTrialMover moves and 
             n_minimization_steps MinMover moves executed sequentially
         """
-        #if n_packing_steps==None:
-        #    n_packing_steps = self.n_pack_steps
-        # 
-        #if n_minimize_steps==None:
-        #    n_minimize_steps = self.n_min_steps
-        #
-        #seqmover = rosetta.SequenceMover()
-        #packmover = rosetta.PackRotamersMover(self.scorefn,packertask)
-        #
-        #for i in range(0,n_minimize_steps):
-        #    #min_repmover = rosetta.RepeatMover(minmover,n_minimize_steps)
-        #    seqmover.add_mover(minmover)
-        # 
-        #for i in range(0,n_packing_steps):
-        #    #pack_repmover = rosetta.RepeatMover(packmover,n_packing_steps)
-        #    seqmover.add_mover(packmover)
+        if n_packing_steps==None:
+            n_packing_steps = self.n_pack_steps
+         
+        if n_minimize_steps==None:
+            n_minimize_steps = self.n_min_steps
+        
+        seqmover = rosetta.SequenceMover()
+        packmover = rosetta.PackRotamersMover(self.scorefn,packertask)
+        
+        for i in range(0,n_minimize_steps):
+            #min_repmover = rosetta.RepeatMover(minmover,n_minimize_steps)
+            seqmover.add_mover(minmover)
+         
+        for i in range(0,n_packing_steps):
+            #pack_repmover = rosetta.RepeatMover(packmover,n_packing_steps)
+            seqmover.add_mover(packmover)
 
         #print >> sys.stderr, seqmover
         
-        #mc = rosetta.MonteCarlo(pose,self.scorefn,kT)
-        #packmin_trial_mover = rosetta.TrialMover(seqmover,mc)
+        mc = rosetta.MonteCarlo(pose,self.scorefn,kT)
+        packmin_trial_mover = rosetta.TrialMover(seqmover,mc)
     
-        #return seqmover
+        return seqmover
     
     def std_dev_threshold_fn_builder(self,threshold,last_n=5):
         def stop(scores):
@@ -252,7 +254,12 @@ class MutantddGPackerJob(AbstractPackerJob):
         
         # Mutant definition - residue to mutate, AA to mutate to, and replicate number
         self.start_pose_pdb = start_pose_pdb
-        start_pose_in = rosetta.pose_from_pdb(self.start_pose_pdb)
+        start_pose_in = None
+        # GAAAAAAAH Why do they not make these backwards-compatible >8-O!!!
+        try:
+            start_pose_in = rosetta.pose_from_pdb(self.start_pose_pdb)
+        except AttributeError:
+            start_pose_in = rosetta.pose_from_file(self.start_pose_pdb)
         self.start_pose = rosetta.Pose()
         self.start_pose.assign(start_pose_in)
         self.residue = residue 
@@ -309,10 +316,17 @@ class MutantddGPackerJob(AbstractPackerJob):
         
         Note that this assumes the ncaa .params and .rotlib files have been permanently added to the database
         """
-        nsAAs_patch = {'NBY':{'cognateAA':'TYR',
-                              'type':"C2_MODIFIED_SUGAR"},
-                       'PRK':{'cognateAA':'LYS',
-                              'type':'C3_AMINO_SUGAR'}}
+        nsAAs_patch = {}
+        try:
+            nsAAs_patch = {'NBY':{'cognateAA':'TYR',
+                                  'type':rosetta.VariantType.C2_AMINO_SUGAR},
+                           'PRK':{'cognateAA':'LYS',
+                                  'type':'C3_AMINO_SUGAR'}}
+        except AttributeError:
+            nsAAs_patch = {'NBY':{'cognateAA':'TYR',
+                                  'type':"C2_MODIFIED_SUGAR"},
+                           'PRK':{'cognateAA':'LYS',
+                                  'type':'C3_AMINO_SUGAR'}}
 
         mut_pose = rosetta.Pose()
         mut_pose.assign(pose)
@@ -320,8 +334,13 @@ class MutantddGPackerJob(AbstractPackerJob):
         res = mut_pose.residue(residue)
         # check for disulfides and correct if needed
         if (res.name() == 'CYS:disulfide') or (res.name() == 'CYD'):
-            disulfide_partner = res.residue_connection_partner(
-                res.n_residue_connections())
+            disulfide_partner = None
+            try:
+                disulfide_partner = res.residue_connection_partner(
+                    res.n_residue_connections())
+            except AttributeError:
+                disulfide_partner = res.residue_connection_partner(
+                    res.n_current_residue_connections())
             temp_pose = rosetta.Pose()
             temp_pose.assign(mut_pose)
             # (Packing causes seg fault if current CYS residue is not
@@ -351,7 +370,7 @@ class MutantddGPackerJob(AbstractPackerJob):
             # for TACC PyRosett install; don't know if this will work with newer versions
             # where VariantType enumerator class can be called direct
             cognate_res_type = rts.name_map( nsAAs_patch[aa_name]['cognateAA'] ) 
-            mut_res_type = rts.get_residue_type_with_variant_added(cognate_res_type,nsAAs_patch[aa_name]['type'])
+            mut_res_type = rts.get_residue_type_with_variant_added(cognate_res_type,nsAAs_patch[aa_name]['type'])            
         else:
             # replace the target residue with the ncAA
             #if residue == 1 or residue == mut_pose.n_residue():
@@ -359,10 +378,15 @@ class MutantddGPackerJob(AbstractPackerJob):
             mut_res_type = rts.name_map(aa_name)
 
         if residue == 1:
-            mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"LOWER_TERMINUS")
+            try: 
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,rosetta.VariantType.LOWER_TERMINUS_VARIANT)                
+            except AttributeError:
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"LOWER_TERMINUS")
         elif residue == mut_pose.n_residue():
-            mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"UPPER_TERMINUS")
-        
+            try:
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,rosetta.VariantType.UPPER_TERMINUS_VARIANT)                
+            except AttributeError:
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"UPPER_TERMINUS")
         mut_res = rosetta.core.conformation.ResidueFactory.create_residue( mut_res_type )
         mut_pose.replace_residue(residue,mut_res,orient_backbone=True)
         

@@ -42,7 +42,7 @@ def _main(args):
 
     for i in range(0,n_local_jobs):
         pack_id = (rank * job_div) + i
-        packer_job = PackSinglePoseJob(start_pdb,rank,restrict_to_chain=restrict_to_chain,kT=float(kT))
+        packer_job = PackSinglePoseJob(start_pdb,rank,restrict_to_chain=restrict_to_chain,kT=float(kT),MCmover=False)
         packer_job.pack_pose()
         print "POSE %d in PROCESS %d COMPLETE, WRITING TO %s" % (i,rank,start_pdb + ".pack" + str(pack_id) + ".pdb")
         write_energies = open(out_pdb + ".pack" + str(pack_id) + "_energies.txt","w")

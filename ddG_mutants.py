@@ -10,15 +10,14 @@ def _main(args):
     
     (start_pose_pdbs_dir, database, residues_str, AAs_str, nreplicates,restrict_to_chain) = (None,None,None,None,None,None)
     if len(args) not in (5,6):
-        print "usage: <start_pose_pdbs_dir> <residue1[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <database> <restrict_to_chain>"
+        print "usage: <start_pose_pdbs_dir> <database> <PDB_residue1[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
         sys.exit(0)
     elif len(args) == 5:
-        (start_pose_pdbs_dir,database, residues_str, AAs_str, nreplicates) = args
+        (start_pose_pdbs_dir,database,residues_str,AAs_str, nreplicates) = args
     elif len(args) == 6:
-        (start_pose_pdbs_dir,database,  residues_str, AAs_str, nreplicates,restrict_to_chain) = args
+        (start_pose_pdbs_dir,database,residues_str, AAs_str, nreplicates,restrict_to_chain) = args
 
         
-
     nreplicates = int(nreplicates)
     AAs = None
 
@@ -59,7 +58,7 @@ def _main(args):
 
     #for (i,p) in enumerate(start_poses):
     	
-    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain)
+    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,PDB_res=True)
 
     cur_exp.scatter_job()
 

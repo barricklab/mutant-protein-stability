@@ -5,16 +5,17 @@ import numpy as np
 import rosetta
 
 nAAs = ['ALA','ASP','LEU','ILE','VAL','GLY','SER','THR','ASP','GLU','ASN','GLN','LYS','ARG','TRP','PHE','TYR','HIS','CYS','MET']
-nsAAs = ['3IY','NOY','AZF','A69','B36'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
+nsAAs = ['3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
 
 class MutagenesisExperimentRunner():
 
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=None,max_pack_rounds=25):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=None,max_pack_rounds=25,PDB_res=False):
 
         self.start_pose_pdbs = start_pose_pdbs
         self.rosetta_init_options = rosetta_init_options
         self.max_pack_rounds = max_pack_rounds
         self.restrict_to_chain = restrict_to_chain
+        self.pdb_res = PDB_res
         self.comm = comm
         self.size = comm.Get_size()
         self.rank = comm.Get_rank()
@@ -64,7 +65,7 @@ class MutagenesisExperimentRunner():
         local_jobs = self.comm.scatter(self.jobs,root=0)
         for (i,job_spec) in enumerate(local_jobs):
             print "===== Process %d, running job %s [ %d / %d ]" % (self.rank,str(job_spec),i,len(local_jobs))
-            ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain)
+            ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
             try:
                 ddg_job.run()
             except RuntimeError:
@@ -182,36 +183,38 @@ class AbstractPackerJob():
     
         return repack_residues
     
-    def compound_mover_fn(self,movers,repeats_per_round):
-
-        def apply_compound_mover(pose):
-            for (mv,reps) in zip(movers,repeats_per_round):
-                for i in range(0,reps):
-                    mv.apply(pose)
+    def make_CompoundMover(self,movers,repeats_per_round):
         
-        return apply_compound_mover
+        class CompoundMover:
 
-    def make_packmin_mover(self,pose,packertask,minmover):
+            def __init__(self,movers,repeats):
+                self.movers = movers
+                self.repeats = repeats
+
+            def apply(self,pose):
+                for (mv,reps) in zip(self.movers,self.repeats):
+                    for i in range(0,reps):
+                        mv.apply(pose)
+        
+        return CompoundMover(movers,repeats_per_round)
+
+    def make_packmin_mover(self,pose,packertask,minmover,n_packing_steps,n_minimize_steps,kT=1.0):
         """
         Build a TrialMover with n_packing_steps RotamerTrialMover moves and 
             n_minimization_steps MinMover moves executed sequentially
         """
-        if n_packing_steps==None:
-            n_packing_steps = self.n_pack_steps
-         
-        if n_minimize_steps==None:
-            n_minimize_steps = self.n_min_steps
         
         seqmover = rosetta.SequenceMover()
         packmover = rosetta.PackRotamersMover(self.scorefn,packertask)
+
+        for i in range(0,n_packing_steps):
+            #pack_repmover = rosetta.RepeatMover(packmover,n_packing_steps)
+            seqmover.add_mover(packmover)
         
         for i in range(0,n_minimize_steps):
             #min_repmover = rosetta.RepeatMover(minmover,n_minimize_steps)
             seqmover.add_mover(minmover)
          
-        for i in range(0,n_packing_steps):
-            #pack_repmover = rosetta.RepeatMover(packmover,n_packing_steps)
-            seqmover.add_mover(packmover)
 
         #print >> sys.stderr, seqmover
         
@@ -248,7 +251,7 @@ class MutantddGPackerJob(AbstractPackerJob):
 
     def __init__(self,start_pose_pdb,residue,AA,replicate,convergence_fn=None,\
                  conv_threshold=0.1,repack_radius=10,scorefn="mm_std",\
-                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=1,n_min_steps=1,max_rounds=100,restrict_to_chain=None):
+                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=1,n_min_steps=1,max_rounds=100,restrict_to_chain=None,PDB_res=False):
         
         AbstractPackerJob.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,max_rounds,restrict_to_chain)
         
@@ -262,7 +265,11 @@ class MutantddGPackerJob(AbstractPackerJob):
             start_pose_in = rosetta.pose_from_file(self.start_pose_pdb)
         self.start_pose = rosetta.Pose()
         self.start_pose.assign(start_pose_in)
-        self.residue = residue 
+        self.residue = None
+        if PDB_res:
+            self.residue = self.start_pose.pdb_info().pdb2pose(residue)
+        else:
+            self.residue = residue
         self.AA = AA 
         self.replicate = replicate
         self.repr_str = "%s %s %s %d" % (self.start_pose.residue(self.residue).name(),self.residue,self.AA,self.replicate)
@@ -293,8 +300,8 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.ref_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.ref_packertask)
         self.mut_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.mut_packertask)
 
-        self.apply_ref_mover = self.compound_mover_fn([self.ref_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
-        self.apply_mut_mover = self.compound_mover_fn([self.mut_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
+        self.ref_mover = self.make_CompoundMover([self.ref_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
+        self.mut_mover = self.make_CompoundMover([self.mut_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
         
         self.ref_trialmover_scores = []
         self.mut_trialmover_scores = []
@@ -400,8 +407,8 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.start_time = time.time()
     
         while ((not self.cnv_fn(self.ref_trialmover_scores)) or (not self.cnv_fn(self.mut_trialmover_scores))) and (self.rnd <= self.max_rounds):
-            self.apply_mut_mover(self.mut_pose)
-            self.apply_ref_mover(self.ref_pose)
+            self.mut_mover.apply(self.mut_pose)
+            self.ref_mover.apply(self.ref_pose)
 
             self.mut_trialmover_scores.append(self.scorefn(self.mut_pose))
             self.ref_trialmover_scores.append(self.scorefn(self.ref_pose))
@@ -439,24 +446,35 @@ class MutantddGPackerJob(AbstractPackerJob):
 
 class PackSinglePoseJob(AbstractPackerJob):
     
-    def __init__(self,in_pose,MPI_rank,convergence_fn=None,\
+    def __init__(self,in_pdb,MPI_rank,convergence_fn=None,\
                  conv_threshold=0.1,repack_radius=10,scorefn="mm_std",\
-                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=1,n_min_steps=1,max_rounds=100):
+                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=1,n_min_steps=1,max_rounds=100,restrict_to_chain=None,kT=1.0,MCmover=True):
         
-        AbstractPacker.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,n_pack_steps,n_min_steps,max_rounds)
+        AbstractPackerJob.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,max_rounds,restrict_to_chain)
         
-        self.pose = Pose()
+        try:
+            in_pose = rosetta.pose_from_file(in_pdb)
+        except AttributeError:
+            in_pose = rosetta.pose_from_pdb(in_pdb)
+        self.kT = kT
+        self.pose = rosetta.Pose()
         self.pose.assign(in_pose)
         self.scores = [self.scorefn(self.pose),]
-        self.pack_round = 0
+        self.rnd = 0
         self.rank = MPI_rank
+        self.n_pack_steps = n_pack_steps
+        self.n_min_steps = n_min_steps
         #self.pose_coll = []
         #self.fill_pose_coll(nposes)
         
-        self.min_mover = self.make_min_mover(self.mintype)
+        self.min_mover = self.make_minmover(self.mintype)
         self.packer_task = self.make_packer_task_with_residues(self.pose)
-        self.mover = self.make_packmin_mover(self.pose,self.packer_task,self.min_mover)
-
+        self.mover = None
+        if MCmover:
+            self.mover = self.make_packmin_mover(self.pose,self.packer_task,self.min_mover,self.n_pack_steps,self.n_min_steps,kT=self.kT)
+        else:
+            pack_mover = rosetta.PackRotamersMover(self.scorefn,self.packer_task)
+            self.mover = self.make_CompoundMover([pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
         #self.pack_poses()
         
     #def fill_pose_coll(self,nposes):
@@ -484,21 +502,21 @@ class PackSinglePoseJob(AbstractPackerJob):
         #trialmover = rosetta.TrialMover(seqmover,mc)
         print "============ Packing Pose Beginning, proccess %d ===========" % (self.rank,)
         print "STARTING SCORE: %f " % (self.scores[0])
-        while (not self.cnv_fn(self.scores) and self.pack_round <= self.max_rounds):
-            print "Applying Mover in process %d, round %d..." % (self.rank,self.pack_round)
+        while ((not self.cnv_fn(self.scores)) and (self.rnd <= self.max_rounds)):        
+            print "Applying Mover in process %d, round %d..." % (self.rank,self.rnd)
             #print seqmover
             #print trialmover
             self.mover.apply(self.pose)
-            scores.append(self.scorefn(self.pose))
-            print "round %d score: %f" % (self.pack_round,scores[-1])
-            self.pack_round += 1
+            self.scores.append(self.scorefn(self.pose))
+            print "round %d score: %f" % (self.rnd,self.scores[-1])
+            self.rnd += 1
         
         print "============ Pose Finished, process %d ===========" % (self.rank,)
         print "FINAL SCORE: %f " % (self.scores[-1])
         #print "ACCEPTED: %f" % (trialmover.num_accepts())
         #return (wt_pose,mut_pose)            
 #
-    def dump_pose(self,posenum,outfile):
+    def dump_pose(self,outfile):
         self.pose.dump_pdb(outfile)
 
 

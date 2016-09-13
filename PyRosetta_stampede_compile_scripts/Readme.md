@@ -24,11 +24,25 @@ Log in to Stampede and decompress the file (best to make a new directory to hold
 
 ## Compiling PyRosetta on TACC Stampede
 
-Download these scripts from the BarrickLab github
+Download these scripts from the BarrickLab github:
+
+`barricklab/mutant-protein-stability/edit/master/PyRosetta_stampede_compile_scripts/DeployPyRosetta.tacc.stampede.py`
+A modified version of the DeployPyRosetta.py script that ships with rosetta, for use on TACC Stampede
+
+`barricklab/mutant-protein-stability/edit/master/PyRosetta_stampede_compile_scripts/run_DeployPyRosetta.tacc.stampede.sh`
+A batch submission script for the above
 
 Locate the PyRosetta.develop directory in the source file, should be located here:
 
 `$ cd PATH/TO/ROSETTA/BUNDLE/tools/PyRosetta.develop`
 
+Copy the scripts to the PyRosetta.develop directory
+
+Submit the batch script using sbatch
+*NOTE* This version of the batch script uses the largemem queue because the standard Stampede compute nodes run out of memory when compiling with more than ~2 cores
+
+ `sbatch run_DeployPyRosetta.tacc.stampede.sh`
+ 
+ This will take < 2h to complete once the job starts (largemem queue can get pretty long...)
 
 

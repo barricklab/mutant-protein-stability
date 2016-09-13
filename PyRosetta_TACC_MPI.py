@@ -5,23 +5,28 @@ import numpy as np
 import rosetta
 
 nAAs = ['ALA','ASP','LEU','ILE','VAL','GLY','SER','THR','ASP','GLU','ASN','GLN','LYS','ARG','TRP','PHE','TYR','HIS','CYS','MET']
-nsAAs = ['3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
+nsAAs = ['PRK','3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
 
 class MutagenesisExperimentRunner():
 
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=None,max_pack_rounds=25,PDB_res=False):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,PDB_res=False):
 
         self.start_pose_pdbs = start_pose_pdbs
         self.rosetta_init_options = rosetta_init_options
         self.max_pack_rounds = max_pack_rounds
         self.restrict_to_chain = restrict_to_chain
         self.pdb_res = PDB_res
-        self.comm = comm
-        self.size = comm.Get_size()
-        self.rank = comm.Get_rank()
+        self.comm = None
+        self.size = 1
+        self.rank = 0
+        if not comm:
+            rosetta.init(extra_options=self.rosetta_init_options)
+        else:
+            self.comm = comm
+            self.size = comm.Get_size()
+            self.rank = comm.Get_rank()
         # keep a list of Job objects
-
-        rosetta.mpi_init(extra_options=self.rosetta_init_options)
+            rosetta.mpi_init(extra_options=self.rosetta_init_options)
         
         if self.rank == 0:
             self.jobs = self.build_job_list(residue_list,AA_list,nreps)
@@ -41,10 +46,10 @@ class MutagenesisExperimentRunner():
         # build job objects for the entire run
         jobs = []
         for start_pdb in self.start_pose_pdbs:
-            for res in residues:
+            for (res,chain) in residues:
                 for AA in AAs:
                     for rep in np.arange(replicates):
-                        jobs.append((start_pdb,res,AA,rep))
+                        jobs.append((start_pdb,res,chain,AA,rep))
         print "+++++++ Sending %d jobs to %d MPI child processes" % (len(jobs),self.size)
         if shuffle_jobs:
             random.shuffle(jobs) 
@@ -79,17 +84,16 @@ class MutagenesisExperimentRunner():
                 self.final_results.extend(r)
             print >> sys.stderr, self.final_results
     
-    def run_all_jobs_serial(self):
-        for (i,j) in enumerate(self.jobs):
-            print "=========== Starting Job no. %d, %s ===========" % (i,j.repr_str)
-            print "++++> starting scores:"
-            print "\tRaw: %f" % (j.raw_start_score)
-            print "\tRef: %f" % (j.ref_start_score)
-            print "\tMut: %f" % (j.mut_start_score)
-            j.run()
-            print "Done!\n"
-            print "Final ddG: %f\n" % (j.ddG,)
-            print "Run Time: %f\n" % (j.run_time,)
+    def run_all_jobs_serial(self,outfile='ddg_out.txt'):
+        for (i,job_spec) in enumerate(self.jobs):
+            print "===== Process %d, running job %s [ %d / %d ]" % (self.rank,str(job_spec),i,len(local_jobs))
+            ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
+            try:
+                ddg_job.run()
+            except RuntimeError:
+                print >> sys.stderr, "****WARNING: RUNTIME ERROR IN PROCESS %d JOB: %s %s; SKIPPING JOB" % (self.rank,str(job_spec),ddg_job.repr_str)
+            self.final_results.append(ddg_job.get_result())
+        self.dump_ddg_results(outfile)
     
     def dump_ddg_results(self,outfile_name,header=True):
         """
@@ -249,11 +253,16 @@ class AbstractPackerJob():
 
 class MutantddGPackerJob(AbstractPackerJob):
 
-    def __init__(self,start_pose_pdb,residue,AA,replicate,convergence_fn=None,\
+    def __init__(self,start_pose_pdb,residue,chain,AA,replicate,convergence_fn=None,\
                  conv_threshold=0.1,repack_radius=10,scorefn="mm_std",\
-                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=1,n_min_steps=1,max_rounds=100,restrict_to_chain=None,PDB_res=False):
-        
-        AbstractPackerJob.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,max_rounds,restrict_to_chain)
+                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=3,n_min_steps=1,max_rounds=100,restrict_to_chain=False,PDB_res=False):
+
+        self.chain = chain
+        self.restrict_packing_to_chain = None
+        if restrict_to_chain:
+            self.restrict_packing_to_chain = self.chain
+
+        AbstractPackerJob.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,max_rounds,self.restrict_packing_to_chain)
         
         # Mutant definition - residue to mutate, AA to mutate to, and replicate number
         self.start_pose_pdb = start_pose_pdb
@@ -267,7 +276,7 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.start_pose.assign(start_pose_in)
         self.residue = None
         if PDB_res:
-            self.residue = self.start_pose.pdb_info().pdb2pose(residue)
+            self.residue = self.start_pose.pdb_info().pdb2pose(self.chain,residue)
         else:
             self.residue = residue
         self.AA = AA 
@@ -326,14 +335,10 @@ class MutantddGPackerJob(AbstractPackerJob):
         nsAAs_patch = {}
         try:
             nsAAs_patch = {'NBY':{'cognateAA':'TYR',
-                                  'type':rosetta.VariantType.C2_AMINO_SUGAR},
-                           'PRK':{'cognateAA':'LYS',
-                                  'type':'C3_AMINO_SUGAR'}}
+                                  'type':rosetta.VariantType.C2_AMINO_SUGAR}}
         except AttributeError:
             nsAAs_patch = {'NBY':{'cognateAA':'TYR',
-                                  'type':"C2_MODIFIED_SUGAR"},
-                           'PRK':{'cognateAA':'LYS',
-                                  'type':'C3_AMINO_SUGAR'}}
+                                  'type':"C2_MODIFIED_SUGAR"}}
 
         mut_pose = rosetta.Pose()
         mut_pose.assign(pose)

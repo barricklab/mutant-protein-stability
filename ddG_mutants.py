@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # test run of CWB's MPI-capable PyRosetta module on TACC lonestar
 
-import sys,os
+import sys,os,re
 from rosetta import *
 from PyRosetta_TACC_MPI import *
 from mpi4py import MPI
@@ -10,12 +10,17 @@ def _main(args):
     
     (start_pose_pdbs_dir, database, residues_str, AAs_str, nreplicates,restrict_to_chain) = (None,None,None,None,None,None)
     if len(args) not in (5,6):
-        print "usage: <start_pose_pdbs_dir> <database> <PDB_residue1[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
+        print "usage: <start_pose_pdbs_dir> <database> <PDB_residue1PDBChain[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
         sys.exit(0)
     elif len(args) == 5:
         (start_pose_pdbs_dir,database,residues_str,AAs_str, nreplicates) = args
+        restrict_to_chain = True # by default
     elif len(args) == 6:
         (start_pose_pdbs_dir,database,residues_str, AAs_str, nreplicates,restrict_to_chain) = args
+        if restrict_to_chain == "True":
+            restrict_to_chain = True
+        else:
+            restrict_to_chain = False
 
         
     nreplicates = int(nreplicates)
@@ -35,10 +40,16 @@ def _main(args):
     for r in residues_ls:
         r_sp = r.split('-')
         if len(r_sp) > 1:
-            r_range = range(int(r_sp[0]),int(r_sp[1])+1)
+            r_ch1 = re.search("(\d+)(\w+)",r_sp[0])
+            r_ch2 = re.search("(\d+)(\w+)",r_sp[1])
+            r_range_num = range(int(r_ch1.group(1)),int(r_ch2.group(1)))
+            assert r_ch1.group(2) == r_ch2.group(2), "When specifying range, chains must be the same: %s" % (r)
+            r_range_chain = [r_ch1.group(2),] * len(r_range_num)
+            r_range = zip(r_range_num,r_range_chain)
             residues.extend(r_range)
         else:
-            residues.append(int(r))
+            r_ch = re.search("(\d+)(\w+)",r)
+            residues.append((int(r_ch.group(1)),r_ch.group(2)))
     print residues
     
     comm = MPI.COMM_WORLD

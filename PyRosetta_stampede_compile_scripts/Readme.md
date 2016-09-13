@@ -1,5 +1,7 @@
 # Compiling Rosetta and PyRosetta
 
+## Obtaining the Rosetta Source Code
+
 Rosetta and PyRosetta are both compiled from the Rosetta source code; in order to obtain this, you’ll need to acquire the appropriate licenses for BOTH Rosetta and PyRosetta.  Both licenses can be obtained from the Rosetta licensing page:
 
 https://www.rosettacommons.org/software/license-and-download
@@ -20,11 +22,13 @@ Log in to Stampede and decompress the file (best to make a new directory to hold
 
 `$ tar -xvzf rosetta_src_3.6_bundle.tar.gz`
 
-Compiling PyRosetta
+## Compiling PyRosetta on TACC Stampede
+
+Download these scripts from the BarrickLab github
 
 Locate the PyRosetta.develop directory in the source file, should be located here:
 
 `$ cd PATH/TO/ROSETTA/BUNDLE/tools/PyRosetta.develop`
 
-Download these scripts from the BarrickLab github:
+
 

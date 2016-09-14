@@ -76,7 +76,7 @@ Aliasing PyRosetta Toolkit GUI to pyrosetta_toolkit
 $WORK/src/stampede_pyrosetta_local_compile/rosetta_src_2016.13.58602_bundle/main/source/build/PyRosetta/linux/namespace/release
 ```
 
-Finally, to be able to load the PyRosetta module from any location, you need to include the following lines in your `~/.idevrc` file:
+Finally, to be able to load the PyRosetta module from any location, you need to include the following lines in your `~/.bash_profile` and `~/.idevrc` files:
 
 ```
 export LD_LIBRARY_PATH=[PATH/TO/PYROSETTA/RELEASE/DIR]release/rosetta:$LD_LIBRARY_PATH
@@ -142,3 +142,5 @@ core.init.random: RandomGenerator:init: Normal mode, seed=1248401244 RG_type=mt1
 
 In [4]: 
 ```
+
+This guide is still very much a work in progress, plz contact Colin with any issues, questions or suggestions

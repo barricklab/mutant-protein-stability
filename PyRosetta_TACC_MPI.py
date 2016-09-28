@@ -4,18 +4,28 @@ import numpy as np
 #from rosetta import *
 import rosetta
 
-nAAs = ['ALA','ASP','LEU','ILE','VAL','GLY','SER','THR','ASP','GLU','ASN','GLN','LYS','ARG','TRP','PHE','TYR','HIS','CYS','MET']
-nsAAs = ['PRK','3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
+nAAs = ['ALA','ASP','LEU','ILE','VAL','GLY','SER','THR','PRO','GLU','ASN','GLN','LYS','ARG','TRP','PHE','TYR','HIS','CYS','MET']
+nsAAs = ['PRK','ACK','3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
+NSAAS_PATCH = {'NBY':{'cognateAA':'TYR',
+                      'type':rosetta.VariantType.C2_AMINO_SUGAR},
+               'PRK':{'cognateAA':'LYS',
+                      'type':rosetta.VariantType.C3_AMINO_SUGAR},
+               'ACK':{'cognateAA':'LYS',
+                      'type':rosetta.VariantType.ACETYLATION}}
+
 
 class MutagenesisExperimentRunner():
 
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,PDB_res=False):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base=""):
 
         self.start_pose_pdbs = start_pose_pdbs
         self.rosetta_init_options = rosetta_init_options
         self.max_pack_rounds = max_pack_rounds
         self.restrict_to_chain = restrict_to_chain
         self.pdb_res = PDB_res
+        self.dump_ref_pdb = dump_ref_pdb
+        self.dump_mut_pdb = dump_mut_pdb
+        self.pdb_base = pdb_base
         self.comm = None
         self.size = 1
         self.rank = 0
@@ -73,9 +83,17 @@ class MutagenesisExperimentRunner():
             ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
             try:
                 ddg_job.run()
-            except RuntimeError:
-                print >> sys.stderr, "****WARNING: RUNTIME ERROR IN PROCESS %d JOB: %s %s; SKIPPING JOB" % (self.rank,str(job_spec),ddg_job.repr_str)
-            self.result.append(ddg_job.get_result())
+                self.result.append(ddg_job.get_result())
+                if self.dump_ref_pdb:
+                    ddg_job.dump_ref_pdb(self.pdb_base + "_".join([ddg_job.start_pose_name] + [str(x) for x in job_spec[1:]]) + "_ref.pdb")
+                if self.dump_mut_pdb:
+                    start_pose_idx = "p" + str(self.start_pose_pdbs.index(job_spec[0]))
+                    ddg_job.dump_mut_pdb(self.pdb_base + "_".join([ddg_job.start_pose_name] + [str(x) for x in job_spec[1:]]) + "_mut.pdb")
+            except RuntimeError as e:
+                print >> sys.stderr, "****WARNING: RUNTIME ERROR IN PROCESS %d JOB %s %s; ABORTING RUN [ERROR:%s]" % (self.rank,str(job_spec),ddg_job.repr_str,e)
+                sys.exit(0)
+            except PyRosettaError as e:
+                print >> sys.stderr, "****WARNING: PYROSETTA ERROR IN PROCESS %d JOB %s %s; SKIPPING JOB [ERROR:%s]" % (self.rank,str(job_spec),ddg_job.repr_str,e)
 
     def gather_results(self):
         results = self.comm.gather(self.result,root=0)
@@ -100,6 +118,7 @@ class MutagenesisExperimentRunner():
         Dump results to a .tsv file
         """
         result_fields =['start_pose_pdb',\
+                        'start_pose_name',\
                         'Pose_residue',\
                         'PDB_residue',\
                         'refAA',\
@@ -251,6 +270,9 @@ class AbstractPackerJob():
         
         return min_mover
 
+class PyRosettaError(Exception):
+    pass
+
 class MutantddGPackerJob(AbstractPackerJob):
 
     def __init__(self,start_pose_pdb,residue,chain,AA,replicate,convergence_fn=None,\
@@ -266,6 +288,7 @@ class MutantddGPackerJob(AbstractPackerJob):
         
         # Mutant definition - residue to mutate, AA to mutate to, and replicate number
         self.start_pose_pdb = start_pose_pdb
+        self.start_pose_name = os.path.split(start_pose_pdb)[1]
         start_pose_in = None
         # GAAAAAAAH Why do they not make these backwards-compatible >8-O!!!
         try:
@@ -281,6 +304,10 @@ class MutantddGPackerJob(AbstractPackerJob):
             self.residue = residue
         self.AA = AA 
         self.replicate = replicate
+
+        if self.residue <= 0:
+            raise PyRosettaError("MISSING RESIDUE %s %d %d %s %s" % (self.start_pose_pdb,self.residue,residue,self.chain,self.AA))
+
         self.repr_str = "%s %s %s %d" % (self.start_pose.residue(self.residue).name(),self.residue,self.AA,self.replicate)
 
         self.n_pack_steps = n_pack_steps
@@ -332,13 +359,6 @@ class MutantddGPackerJob(AbstractPackerJob):
         
         Note that this assumes the ncaa .params and .rotlib files have been permanently added to the database
         """
-        nsAAs_patch = {}
-        try:
-            nsAAs_patch = {'NBY':{'cognateAA':'TYR',
-                                  'type':rosetta.VariantType.C2_AMINO_SUGAR}}
-        except AttributeError:
-            nsAAs_patch = {'NBY':{'cognateAA':'TYR',
-                                  'type':"C2_MODIFIED_SUGAR"}}
 
         mut_pose = rosetta.Pose()
         mut_pose.assign(pose)
@@ -377,12 +397,12 @@ class MutantddGPackerJob(AbstractPackerJob):
             rts = chm.residue_type_set("fa_standard")
     
             
-        if aa_name in nsAAs_patch.keys():
+        if aa_name in NSAAS_PATCH.keys():
             # PTMs and nsAAs using the patch system need to be treated differently
             # for TACC PyRosett install; don't know if this will work with newer versions
             # where VariantType enumerator class can be called direct
-            cognate_res_type = rts.name_map( nsAAs_patch[aa_name]['cognateAA'] ) 
-            mut_res_type = rts.get_residue_type_with_variant_added(cognate_res_type,nsAAs_patch[aa_name]['type'])            
+            cognate_res_type = rts.name_map( NSAAS_PATCH[aa_name]['cognateAA'] ) 
+            mut_res_type = rts.get_residue_type_with_variant_added(cognate_res_type,NSAAS_PATCH[aa_name]['type'])            
         else:
             # replace the target residue with the ncAA
             #if residue == 1 or residue == mut_pose.n_residue():
@@ -433,6 +453,7 @@ class MutantddGPackerJob(AbstractPackerJob):
 
     def get_result(self):
         result_dict = {'start_pose_pdb':self.start_pose_pdb,
+                       'start_pose_name':self.start_pose_name,
                        'Pose_residue':self.residue,
                        'PDB_residue':self.start_pose.pdb_info().pose2pdb(self.residue),
                        'refAA':self.start_pose.residue(self.residue).name3(),
@@ -448,6 +469,13 @@ class MutantddGPackerJob(AbstractPackerJob):
                        'minimize_steps':self.n_min_steps,
                        'run_time':self.run_time}
         return result_dict
+
+    def dump_ref_pdb(self,outfile):
+        self.ref_pose.dump_pdb(outfile)
+
+    def dump_mut_pdb(self,outfile):
+        self.mut_pose.dump_pdb(outfile)
+        
 
 class PackSinglePoseJob(AbstractPackerJob):
     

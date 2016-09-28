@@ -1,29 +1,56 @@
 #!/usr/bin/env python
 # test run of CWB's MPI-capable PyRosetta module on TACC lonestar
 
-import sys,os,re
+import sys,os,re,argparse
 from rosetta import *
 from PyRosetta_TACC_MPI import *
 from mpi4py import MPI
 
+
 def _main(args):
+
+    parser = argparse.ArgumentParser(description="Predict ddG (ddREU) effects of point mutations to a protein structure. Handles nsAAs, uses MPI")
+
+    parser.add_argument('start_pose_pdbs_dir',help='Directory containing starting pose .pdb files')
+    parser.add_argument('database',help='location of Rosetta database to use')
+    parser.add_argument('residues',help='Residue positions to mutate\n<PDB_residue1PDBChain[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]>')
+    parser.add_argument('mutate_to',help="AAs to mutate to (three-letter codes) <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'>")
+    parser.add_argument('--replicates','-r',default=10,type=int,help='Replicate runs (per starting pose)')
+    parser.add_argument('--restrict_to_chain','-c',action='store_false',help='Only pack residues in the chains specificed in <residues>')
+    parser.add_argument('--dump_ref_pdb','-f',action='store_true')
+    parser.add_argument('--dump_mut_pdb','-m',action='store_true')
+    parser.add_argument('--dump_pdb_base','-b',default="ddg_out")
+
+    parsed_args = parser.parse_args()
+    print parsed_args
+
+    start_pose_pdbs_dir = parsed_args.start_pose_pdbs_dir
+    database = parsed_args.database
+    residues_str = parsed_args.residues
+    AAs_str = parsed_args.mutate_to
+    nreplicates = parsed_args.replicates
+    restrict_to_chain = parsed_args.restrict_to_chain
+    dump_ref_pdb = parsed_args.dump_ref_pdb
+    dump_mut_pdb = parsed_args.dump_mut_pdb
+    dump_pdb_base = parsed_args.dump_pdb_base
     
-    (start_pose_pdbs_dir, database, residues_str, AAs_str, nreplicates,restrict_to_chain) = (None,None,None,None,None,None)
-    if len(args) not in (5,6):
-        print "usage: <start_pose_pdbs_dir> <database> <PDB_residue1PDBChain[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
-        sys.exit(0)
-    elif len(args) == 5:
-        (start_pose_pdbs_dir,database,residues_str,AAs_str, nreplicates) = args
-        restrict_to_chain = True # by default
-    elif len(args) == 6:
-        (start_pose_pdbs_dir,database,residues_str, AAs_str, nreplicates,restrict_to_chain) = args
-        if restrict_to_chain == "True":
-            restrict_to_chain = True
-        else:
-            restrict_to_chain = False
+#
+#    if len(args) not in (5,6):
+#        print args
+#        print "usage: <start_pose_pdbs_dir> <database> <PDB_residue1PDBChain[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]> <AA1[#,AA2,AA3...]|'All'|'nAAs'|'nsAAs'> <replicate_packing_runs> <restrict_to_chain>"
+#        sys.exit(0)
+#    elif len(args) == 5:
+#        (start_pose_pdbs_dir,database,residues_str,AAs_str, nreplicates) = args
+#        restrict_to_chain = True # by default
+#    elif len(args) == 6:
+#        (start_pose_pdbs_dir,database,residues_str, AAs_str, nreplicates,restrict_to_chain) = args
+#        if restrict_to_chain == "True":
+#            restrict_to_chain = True
+#        else:
+#            restrict_to_chain = False
 
         
-    nreplicates = int(nreplicates)
+#    nreplicates = int(nreplicates)
     AAs = None
 
     if AAs_str.lower() == "all":
@@ -69,7 +96,7 @@ def _main(args):
 
     #for (i,p) in enumerate(start_poses):
     	
-    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,PDB_res=True)
+    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,PDB_res=True)
 
     cur_exp.scatter_job()
 

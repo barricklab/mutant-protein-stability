@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import sys,time,random
+import os,sys,time,random
 import numpy as np
 #from rosetta import *
 import rosetta
@@ -80,8 +80,9 @@ class MutagenesisExperimentRunner():
         local_jobs = self.comm.scatter(self.jobs,root=0)
         for (i,job_spec) in enumerate(local_jobs):
             print "===== Process %d, running job %s [ %d / %d ]" % (self.rank,str(job_spec),i,len(local_jobs))
-            ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
             try:
+                ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
+            
                 ddg_job.run()
                 self.result.append(ddg_job.get_result())
                 if self.dump_ref_pdb:
@@ -183,7 +184,10 @@ class AbstractPackerJob():
             #pack_residues = Vector1([x in residues for x in range(1,pose.n_residue())])
             pack_residues = rosetta.utility.vector1_bool()
             for i in range(1,pose.n_residue() + 1):
-                pack_residues.append(i in residues)
+                if self.restrict_to_chain and pose.pdb_info().chain(i) != self.restrict_to_chain:
+                    continue
+                else:
+                    pack_residues.append(i in residues)
             packer_task.restrict_to_residues(pack_residues)
         
         return packer_task
@@ -256,11 +260,21 @@ class AbstractPackerJob():
             return passed
         return stop
     
-    def make_minmover(self,mintype):
+    def make_minmover(self,mintype,pose):
         # Set up MoveMap.
         mm = rosetta.MoveMap()
-        mm.set_bb(True)
-        mm.set_chi(True)
+        if self.restrict_to_chain:
+            chain_residues = []
+            for i in range(1,pose.n_residue()):
+                if self.restrict_to_chain and pose.pdb_info().chain(i) == self.restrict_to_chain:
+                    chain_residues.append(i)
+            chain_min = min(chain_residues)
+            chain_max = max(chain_residues)
+            mm.set_bb_true_range(chain_min,chain_max)
+            mm.set_chi_true_range(chain_min,chain_max)
+        else:
+            mm.set_bb(True)
+            mm.set_chi(True)
 
         # Set up a Minimization mover using the mm_std score function
         min_mover = rosetta.MinMover()
@@ -331,13 +345,14 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.ref_packertask = self.packer_task_repack_in_radius(self.ref_pose,self.residue,self.repack_radius)
         self.mut_packertask = self.packer_task_repack_in_radius(self.mut_pose,self.residue,self.repack_radius)        
         
-        self.min_mover = self.make_minmover(mintype)
+        self.ref_min_mover = self.make_minmover(mintype,self.ref_pose)
+        self.mut_min_mover = self.make_minmover(mintype,self.ref_pose)
             
         self.ref_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.ref_packertask)
         self.mut_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.mut_packertask)
 
-        self.ref_mover = self.make_CompoundMover([self.ref_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
-        self.mut_mover = self.make_CompoundMover([self.mut_pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
+        self.ref_mover = self.make_CompoundMover([self.ref_pack_mover,self.ref_min_mover],[self.n_pack_steps,self.n_min_steps])
+        self.mut_mover = self.make_CompoundMover([self.mut_pack_mover,self.mut_min_mover],[self.n_pack_steps,self.n_min_steps])
         
         self.ref_trialmover_scores = []
         self.mut_trialmover_scores = []
@@ -500,7 +515,7 @@ class PackSinglePoseJob(AbstractPackerJob):
         #self.pose_coll = []
         #self.fill_pose_coll(nposes)
         
-        self.min_mover = self.make_minmover(self.mintype)
+        self.min_mover = self.make_minmover(self.mintype,self.pose)
         self.packer_task = self.make_packer_task_with_residues(self.pose)
         self.mover = None
         if MCmover:

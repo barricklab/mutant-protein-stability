@@ -91,10 +91,10 @@ class MutagenesisExperimentRunner():
                     start_pose_idx = "p" + str(self.start_pose_pdbs.index(job_spec[0]))
                     ddg_job.dump_mut_pdb(self.pdb_base + "_".join([ddg_job.start_pose_name] + [str(x) for x in job_spec[1:]]) + "_mut.pdb")
             except RuntimeError as e:
-                print >> sys.stderr, "****WARNING: RUNTIME ERROR IN PROCESS %d JOB %s %s; ABORTING RUN [ERROR:%s]" % (self.rank,str(job_spec),ddg_job.repr_str,e)
+                print >> sys.stderr, "****WARNING: RUNTIME ERROR IN PROCESS %d JOB %s; ABORTING RUN [ERROR:%s]" % (self.rank,str(job_spec),e)
                 sys.exit(0)
             except PyRosettaError as e:
-                print >> sys.stderr, "****WARNING: PYROSETTA ERROR IN PROCESS %d JOB %s %s; SKIPPING JOB [ERROR:%s]" % (self.rank,str(job_spec),ddg_job.repr_str,e)
+                print >> sys.stderr, "****WARNING: PYROSETTA ERROR IN PROCESS %d JOB %s; SKIPPING JOB [ERROR:%s]" % (self.rank,str(job_spec),e)
 
     def gather_results(self):
         results = self.comm.gather(self.result,root=0)
@@ -259,9 +259,8 @@ class AbstractPackerJob():
                 print "std dev for scores %s: %f thresh: %f pass?: %s" % (str(scores[-last_n:]),last_n_stdev,  threshold,str(passed))
             return passed
         return stop
-    
-    def make_minmover(self,mintype,pose):
-        # Set up MoveMap.
+
+    def build_movemap(self,pose):
         mm = rosetta.MoveMap()
         if self.restrict_to_chain:
             chain_residues = []
@@ -275,6 +274,11 @@ class AbstractPackerJob():
         else:
             mm.set_bb(True)
             mm.set_chi(True)
+        return mm
+        
+    def make_minmover(self,mintype,pose):
+        # Set up MoveMap.
+        mm = self.build_movemap(pose)
 
         # Set up a Minimization mover using the mm_std score function
         min_mover = rosetta.MinMover()
@@ -512,8 +516,6 @@ class PackSinglePoseJob(AbstractPackerJob):
         self.rank = MPI_rank
         self.n_pack_steps = n_pack_steps
         self.n_min_steps = n_min_steps
-        #self.pose_coll = []
-        #self.fill_pose_coll(nposes)
         
         self.min_mover = self.make_minmover(self.mintype,self.pose)
         self.packer_task = self.make_packer_task_with_residues(self.pose)
@@ -523,31 +525,8 @@ class PackSinglePoseJob(AbstractPackerJob):
         else:
             pack_mover = rosetta.PackRotamersMover(self.scorefn,self.packer_task)
             self.mover = self.make_CompoundMover([pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
-        #self.pack_poses()
-        
-    #def fill_pose_coll(self,nposes):
-    #    for i in np.arange(0,nposes):
-    #        new_pose = rosetta.Pose()
-    #        new_pose.assign(self.in_pose)
-    #        self.pose_coll.append(new_pose)
-    
-    #def pack_all_poses(self):
-    #    for p in range(len(self.pose_coll)):
-    #        self.pack_pose(p)
             
     def pack_pose(self):
-        #pack_round = 1
-        #scores = []
-        #cur_pose = self.pose_coll[pose_no]
-        #packer_task = self.make_packer_task_with_residues(cur_pose)
-        #trialmover = rosetta.TrialMover()
-        #seqmover = rosetta.SequenceMover()
-        #for i in range(0,self.n_pack_steps):
-        #    seqmover.add_mover(rosetta.RotamerTrialsMover(self.scorefn,packer_task))
-        #for i in range(0,self.n_min_steps):
-        #    seqmover.add_mover(self.min_mover)
-        #mc = rosetta.MonteCarlo(cur_pose,self.scorefn,1.0)
-        #trialmover = rosetta.TrialMover(seqmover,mc)
         print "============ Packing Pose Beginning, proccess %d ===========" % (self.rank,)
         print "STARTING SCORE: %f " % (self.scores[0])
         while ((not self.cnv_fn(self.scores)) and (self.rnd <= self.max_rounds)):        
@@ -561,9 +540,36 @@ class PackSinglePoseJob(AbstractPackerJob):
         
         print "============ Pose Finished, process %d ===========" % (self.rank,)
         print "FINAL SCORE: %f " % (self.scores[-1])
-        #print "ACCEPTED: %f" % (trialmover.num_accepts())
-        #return (wt_pose,mut_pose)            
 #
+    def dump_pose(self,outfile):
+        self.pose.dump_pdb(outfile)
+
+
+class FastRelaxPoseJob(AbstractPackerJob):
+    
+    def __init__(self,in_pdb,MPI_rank,scorefn,restrict_to_chain=None):
+        
+        AbstractPackerJob.__init__(self,scorefn=scorefn,restrict_to_chain=restrict_to_chain)
+        
+        in_pose = rosetta.pose_from_file(in_pdb)
+
+        self.pose = rosetta.Pose()
+        self.pose.assign(in_pose)
+        self.start_score = self.scorefn(self.pose)
+        self.rank = MPI_rank
+        self.rlx_mover = rosetta.FastRelax(self.scorefn)
+        self.rlx_mover.set_movemap(self.build_movemap(self.pose))
+        self.final_score = None
+
+            
+    def pack_pose(self):
+        print "============ Packing Pose Beginning, proccess %d ===========" % (self.rank,)
+        print "STARTING SCORE: %f " % (self.scorefn(self.pose))
+        self.rlx_mover.apply(self.pose)
+        print "============ Pose Finished, process %d ===========" % (self.rank,)
+        print "FINAL SCORE: %f " % (self.scorefn(self.pose))
+        self.final_score=self.scorefn(self.pose)
+
     def dump_pose(self,outfile):
         self.pose.dump_pdb(outfile)
 

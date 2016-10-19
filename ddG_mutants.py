@@ -16,6 +16,8 @@ def _main(args):
     parser.add_argument('residues',help='Residue positions to mutate\n<PDB_residue1PDBChain[,residue2,residue3...]|range1Start-range1End[,range2Start-range2End,...]>')
     parser.add_argument('mutate_to',help="AAs to mutate to (three-letter codes) <AA1[,AA2,AA3...]|'All'|'nAAs'|'nsAAs'>")
     parser.add_argument('--replicates','-r',default=10,type=int,help='Replicate runs (per starting pose)')
+    parser.add_argument('--min_restrict_radius','-d',action='store_true',help='Only minimize residues within the packing radius (Default=FALSE)')
+    parser.add_argument('--min_cst_sd','-k',default=None,type=float,help='Use bb coord constraints w/ this std. dev. during minimization (recommend 0.5, default=None)')
     parser.add_argument('--restrict_to_chain','-c',action='store_false',help='Only pack residues in the chains specificed in <residues>')
     parser.add_argument('--dump_ref_pdb','-f',action='store_true')
     parser.add_argument('--dump_mut_pdb','-m',action='store_true')
@@ -29,6 +31,8 @@ def _main(args):
     residues_str = parsed_args.residues
     AAs_str = parsed_args.mutate_to
     nreplicates = parsed_args.replicates
+    min_cst_sd = parsed_args.min_cst_sd
+    min_restrict_radius = parsed_args.min_restrict_radius
     restrict_to_chain = parsed_args.restrict_to_chain
     dump_ref_pdb = parsed_args.dump_ref_pdb
     dump_mut_pdb = parsed_args.dump_mut_pdb
@@ -96,7 +100,7 @@ def _main(args):
 
     #for (i,p) in enumerate(start_poses):
     	
-    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,PDB_res=True)
+    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,min_cst_sd=min_cst_sd,min_restrict_radius=min_restrict_radius,PDB_res=True)
 
     cur_exp.scatter_job()
 

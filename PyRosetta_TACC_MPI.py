@@ -11,18 +11,32 @@ NSAAS_PATCH = {'NBY':{'cognateAA':'TYR',
                'PRK':{'cognateAA':'LYS',
                       'type':rosetta.VariantType.C3_AMINO_SUGAR},
                'ACK':{'cognateAA':'LYS',
-                      'type':rosetta.VariantType.ACETYLATION}}
+                      'type':rosetta.VariantType.ACETYLATION},
+               'PHS':{'cognateAA':'SER',
+                      'type':rosetta.VariantType.PHOSPHORYLATION},
+               'PHT':{'cognateAA':'THR',
+                      'type':rosetta.VariantType.PHOSPHORYLATION},
+               'PHY':{'cognateAA':'TYR',
+                      'type':rosetta.VariantType.PHOSPHORYLATION}}
 
+"""
+class SecondaryMutantsExperimentRunner(MutagenesisExperimentRunner):
+    
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,ref_pdb,center_residue,center_residue_chain,radius,nreps=50,restrict_to_chain=False,max_pack_rounds=25,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base=""):
+        
+"""
 
 class MutagenesisExperimentRunner():
 
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base=""):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,residue_list=[],AA_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,min_cst_sd=None,min_restrict_radius=False,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base="",):
 
         self.start_pose_pdbs = start_pose_pdbs
         self.rosetta_init_options = rosetta_init_options
         self.max_pack_rounds = max_pack_rounds
         self.restrict_to_chain = restrict_to_chain
         self.pdb_res = PDB_res
+        self.min_cst_sd = min_cst_sd
+        self.min_restrict_radius = min_restrict_radius
         self.dump_ref_pdb = dump_ref_pdb
         self.dump_mut_pdb = dump_mut_pdb
         self.pdb_base = pdb_base
@@ -81,7 +95,7 @@ class MutagenesisExperimentRunner():
         for (i,job_spec) in enumerate(local_jobs):
             print "===== Process %d, running job %s [ %d / %d ]" % (self.rank,str(job_spec),i,len(local_jobs))
             try:
-                ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,PDB_res=self.pdb_res)
+                ddg_job = MutantddGPackerJob(*job_spec,max_rounds=self.max_pack_rounds,restrict_to_chain=self.restrict_to_chain,min_restrict_radius=self.min_restrict_radius,PDB_res=self.pdb_res,min_cst_sd=self.min_cst_sd)
             
                 ddg_job.run()
                 self.result.append(ddg_job.get_result())
@@ -260,30 +274,38 @@ class AbstractPackerJob():
             return passed
         return stop
 
-    def build_movemap(self,pose):
+    def build_movemap(self,pose,restrict_radius_center=None,restrict_radius=None):
+        if not restrict_radius:
+            restrict_radius = self.repack_radius
         mm = rosetta.MoveMap()
-        if self.restrict_to_chain:
-            chain_residues = []
+        mm.set_bb(False)
+        mm.set_chi(False)
+        mm.set_jump(False)
+        residues = []
+        if restrict_radius_center:
+            residues = self.residue_CAs_in_radius(pose,restrict_radius_center,restrict_radius,self.restrict_to_chain)
+        elif self.restrict_to_chain:
             for i in range(1,pose.n_residue()):
                 if self.restrict_to_chain and pose.pdb_info().chain(i) == self.restrict_to_chain:
-                    chain_residues.append(i)
-            chain_min = min(chain_residues)
-            chain_max = max(chain_residues)
-            mm.set_bb_true_range(chain_min,chain_max)
-            mm.set_chi_true_range(chain_min,chain_max)
+                    residues.append(i)
         else:
-            mm.set_bb(True)
-            mm.set_chi(True)
+            residues = range(1,pose.n_residue() + 1)
+    
+        for r in residues:
+            mm.set_bb(r,True)
+            mm.set_chi(r,True)
+        
         return mm
         
-    def make_minmover(self,mintype,pose):
-        # Set up MoveMap.
-        mm = self.build_movemap(pose)
-
+    def make_minmover(self,mintype,movemap,pose,tolerance=0.001):
         # Set up a Minimization mover using the mm_std score function
         min_mover = rosetta.MinMover()
-        min_mover.movemap(mm)
-        min_mover.score_function(self.scorefn)
+        min_mover.movemap(movemap)
+        min_scorefn = self.scorefn.clone()
+        if self.min_cst_sd:
+            min_scorefn.set_weight(rosetta.core.scoring.coordinate_constraint,1.0) # arbitrary weight for now
+        min_mover.tolerance=tolerance
+        min_mover.score_function(min_scorefn)
         min_mover.min_type(mintype)
         
         return min_mover
@@ -295,10 +317,12 @@ class MutantddGPackerJob(AbstractPackerJob):
 
     def __init__(self,start_pose_pdb,residue,chain,AA,replicate,convergence_fn=None,\
                  conv_threshold=0.1,repack_radius=10,scorefn="mm_std",\
-                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=3,n_min_steps=1,max_rounds=100,restrict_to_chain=False,PDB_res=False):
+                 mintype="dfpmin_armijo_nonmonotone",n_pack_steps=3,n_min_steps=1,max_rounds=100,min_cst_sd=None,min_restrict_radius=False,restrict_to_chain=False,PDB_res=False):
 
         self.chain = chain
         self.restrict_packing_to_chain = None
+        self.min_cst_sd = min_cst_sd
+        self.min_restrict_radius = min_restrict_radius
         if restrict_to_chain:
             self.restrict_packing_to_chain = self.chain
 
@@ -336,6 +360,9 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.mut_pose = rosetta.Pose()
         self.ref_pose.assign(self.mutate_aa(self.start_pose,self.residue,self.start_pose.residue(self.residue).name3()))
         self.mut_pose.assign(self.mutate_aa(self.start_pose,self.residue,self.AA))
+        if self.min_cst_sd:
+            rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
+            rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
 
         
         # Store initial pose scores
@@ -348,9 +375,20 @@ class MutantddGPackerJob(AbstractPackerJob):
         # Set up PackerTasks and Movers 
         self.ref_packertask = self.packer_task_repack_in_radius(self.ref_pose,self.residue,self.repack_radius)
         self.mut_packertask = self.packer_task_repack_in_radius(self.mut_pose,self.residue,self.repack_radius)        
+
         
-        self.ref_min_mover = self.make_minmover(mintype,self.ref_pose)
-        self.mut_min_mover = self.make_minmover(mintype,self.ref_pose)
+        self.ref_min_movemap = None
+        self.mut_min_movemap = None
+
+        if self.min_restrict_radius:
+            self.ref_min_movemap = self.build_movemap(self.ref_pose,self.residue)
+            self.mut_min_movemap = self.build_movemap(self.mut_pose,self.residue)
+        else:
+            self.ref_min_movemap = self.build_movemap(self.ref_pose)
+            self.mut_min_movemap = self.build_movemap(self.mut_pose)
+
+        self.ref_min_mover = self.make_minmover(mintype,self.ref_min_movemap,self.ref_pose)
+        self.mut_min_mover = self.make_minmover(mintype,self.mut_min_movemap,self.mut_pose)
             
         self.ref_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.ref_packertask)
         self.mut_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.mut_packertask)

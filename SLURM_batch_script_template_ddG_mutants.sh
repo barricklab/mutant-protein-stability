@@ -23,8 +23,9 @@ module load python
 
 # MAKE SURE THAT THE PyRosetta_TACC_MPI.py module is in your $PYTHONPATH
 
-# Launch executables
-ibrun tacc_affinity $WORK/scripts/ddG_mutants.py -r 3 ../in_1qln_start_poses_rlx/poses $CWB_PYROSETTA_DB 88A all
+# Launch executables - make sure to change these for your local env
+
+ibrun tacc_affinity $WORK/scripts/ddG_mutants.py -r 3 -k 10 ../in_1qln_start_poses_rlx/poses $CWB_PYROSETTA_DB 88A all
 wait
 
 # usage: ddG_mutants.py [-h] [--replicates REPLICATES] [--restrict_to_chain]
@@ -52,6 +53,13 @@ wait
 #   --restrict_to_chain, -c
 #                         Only pack residues in the chains specificed in
 #                         <residues>
+#   --min_restrict_radius, -d
+#                          Only minimize residues within the packing 
+#                          radius (Default=FALSE)')
+#   --min_cst_sd MIN_CST_SD, -k MIN_CST_SD
+#                          Use bb coord constraints w/ this std. dev. 
+#                          during minimization. Recommend 10, default
+#			   is None (no constraints)
 #   --dump_ref_pdb, -f
 #   --dump_mut_pdb, -m
 #   --dump_pdb_base DUMP_PDB_BASE, -b DUMP_PDB_BASE

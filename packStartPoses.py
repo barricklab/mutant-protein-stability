@@ -17,6 +17,7 @@ def _main(args):
     parser.add_argument('--scorefxn','-s',default='talaris2014',help='Name of Rosetta score function to use')
     parser.add_argument('--restrict_to_chain','-c',default=None,help='Only relax residues in these chains')
     parser.add_argument('--print_scores','-p',action="store_true",help='Print pose scores to packed_pose_scores.sc')
+    parser.add_argument('--constraint_file','-t',default=None,help='Add a constraint file')
 
     parsed_args = parser.parse_args()
     #print parsed_args
@@ -30,6 +31,7 @@ def _main(args):
     scorefxn = parsed_args.scorefxn
     restrict_to_chain = parsed_args.restrict_to_chain
     print_scores = parsed_args.print_scores
+    constraint_file = parsed_args.constraint_file
 
 
 #    (start_pdb, n_start_poses, n_pack, n_min, restrict_to_chain) = (None,None,None,None,None)
@@ -66,6 +68,9 @@ def _main(args):
                        "-relax:coord_constrain_sidechains",
                        "-relax:ramp_constraints false",
                        database]
+    
+    if constraint_file:
+        rosetta_options.append("-constraints:cst_fa_file %s" % constraint_file)
 
     rosetta.mpi_init(extra_options=" ".join(rosetta_options))
 
@@ -95,7 +100,7 @@ def _main(args):
     for i in range(0,n_local_jobs):
         pack_id = "%d-%d" % (rank,n_local_jobs)
         outfile_name = out_pdb + ".pack" + pack_id + ".pdb"
-        packer_job = FastRelaxPoseJob(start_pdb,rank,scorefn=scorefxn,restrict_to_chain=restrict_to_chain)
+        packer_job = FastRelaxPoseJob(start_pdb,rank,scorefn=scorefxn,restrict_to_chain=restrict_to_chain,constraint_file=constraint_file)
         packer_job.pack_pose()
         print "POSE %d in PROCESS %d COMPLETE, WRITING TO %s" % (i,rank,outfile_name)
         if print_scores:

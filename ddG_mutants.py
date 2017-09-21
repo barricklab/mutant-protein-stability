@@ -22,6 +22,9 @@ def _main(args):
     parser.add_argument('--dump_ref_pdb','-f',action='store_true')
     parser.add_argument('--dump_mut_pdb','-m',action='store_true')
     parser.add_argument('--dump_pdb_base','-b',default="ddg_out")
+    parser.add_argument('--constraint_file','-t',default=None,help='Add a constraint file')
+    parser.add_argument('--ddg_out_file','-g',default='ddg_out.txt',help='Textfile to output ddG results')
+    parser.add_argument('--verbose','-v',default=1,help="How much output. >1 may cause IO issues on Stampede for large parallel runs")
 
     parsed_args = parser.parse_args()
     print parsed_args
@@ -37,7 +40,9 @@ def _main(args):
     dump_ref_pdb = parsed_args.dump_ref_pdb
     dump_mut_pdb = parsed_args.dump_mut_pdb
     dump_pdb_base = parsed_args.dump_pdb_base
-    
+    constraint_file = parsed_args.constraint_file
+    ddg_out_file = parsed_args.ddg_out_file
+    verbose = parsed_args.verbose
 #
 #    if len(args) not in (5,6):
 #        print args
@@ -87,8 +92,15 @@ def _main(args):
 
     rank = comm.Get_rank()
     size = comm.Get_size()
-    
-    rosetta_options="-ignore_unrecognized_res False -database=%s" % (database,)
+
+    extra_options = []
+
+    if constraint_file:
+        extra_options.append("-constraints:cst_fa_file=%s" % constraint_file)
+    if len(extra_options) > 0:
+        rosetta_options="-ignore_unrecognized_res False -database=%s %s" % (database," ".join(extra_options))
+    else:
+        rosetta_options="-ignore_unrecognized_res False -database=%s" % (database,)
 
     start_pose_pdbs = [start_pose_pdbs_dir + "/" + x for x in os.listdir(start_pose_pdbs_dir) if len(x) > 4 and x[-4:] == '.pdb']
     
@@ -100,7 +112,7 @@ def _main(args):
 
     #for (i,p) in enumerate(start_poses):
     	
-    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,min_cst_sd=min_cst_sd,min_restrict_radius=min_restrict_radius,PDB_res=True)
+    cur_exp = MutagenesisExperimentRunner(start_pose_pdbs,rosetta_options,comm,residues,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,min_cst_sd=min_cst_sd,min_restrict_radius=min_restrict_radius,PDB_res=True,constraint_file=constraint_file,verbose=verbose)
 
     cur_exp.scatter_job()
 
@@ -110,8 +122,8 @@ def _main(args):
 
     if rank == 0:
         print "==============================="
-        print "All jobs complete, writing output to test_out.txt...",
-        cur_exp.dump_ddg_results("ddg_out.txt")
+        print "All jobs complete, writing output to %s..." % (ddg_out_file,),
+        cur_exp.dump_ddg_results(ddg_out_file)
         print "Done!"
     
 if __name__=='__main__':

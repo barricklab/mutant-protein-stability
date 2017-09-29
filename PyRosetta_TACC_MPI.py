@@ -124,7 +124,7 @@ class AbstractPackerJob():
         self.scorefn = rosetta.create_score_function(scorefn)        
         self.constraint_file = constraint_file
 
-    def mutate_aa(self,pose,residue,aa_name):
+    def mutate_aa(self,pose,residue,aa_name,orient_bb=True,repack_sidechain=True,clone_pose=True):
         """
         Swap w/t AA at residue number 'residue' in 'pose' with 'ncaa_name' (3-letter code)
     
@@ -133,10 +133,13 @@ class AbstractPackerJob():
         Note that this assumes the ncaa .params and .rotlib files have been permanently added to the database
         """
 
-        mut_pose = rosetta.Pose()
-        mut_pose.assign(pose)
+        mut_pose = pose
+        if clone_pose:
+            mut_pose = rosetta.Pose()
+            mut_pose.assign(pose)
 
         res = mut_pose.residue(residue)
+        ref_res_name = res.name()
         # check for disulfides and correct if needed
         if (res.name() == 'CYS:disulfide') or (res.name() == 'CYD'):
             disulfide_partner = None
@@ -193,8 +196,33 @@ class AbstractPackerJob():
             except AttributeError:
                 mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"UPPER_TERMINUS")
         mut_res = rosetta.core.conformation.ResidueFactory.create_residue( mut_res_type )
-        mut_pose.replace_residue(residue,mut_res,orient_backbone=True)
-        
+        mut_pose.replace_residue(residue,mut_res,orient_backbone=orient_bb)
+
+        # Highly recommended to repack the sidechain after calling Pose.replace_residue()...otherwise
+        # later packing steps get caught in weird local minima :'(
+        tmp_verbose = self.verbose
+        self.verbose=2
+        if repack_sidechain:
+            # annoying but apparently has to be done this way?...
+            repack_task = rosetta.standard_packer_task(mut_pose)
+            repack_task.restrict_to_repacking()
+            repack_res_list = rosetta.utility.vector1_bool()
+            for i in range(1,mut_pose.n_residue()+1):
+                repack_res_list.append(i == residue)
+            repack_task.restrict_to_residues(repack_res_list)
+            sidechain_PackRotamersMover = rosetta.PackRotamersMover(self.scorefn,repack_task)
+            
+            initial_mut_score = self.scorefn(mut_pose)
+            if self.verbose > 1:
+                print "Packer task:"
+                print repack_task
+                print "Repacking mutated sidechain %s %s -> %s..." % (mut_pose.pdb_info().pose2pdb(residue),ref_res_name,aa_name),
+            sidechain_PackRotamersMover.apply(mut_pose)
+            repacked_mut_score = self.scorefn(mut_pose)
+            if self.verbose > 1:
+                print "initial E = %f repacked E = %f" % (initial_mut_score,repacked_mut_score)
+        self.verbose=tmp_verbose
+
         return mut_pose
 
         
@@ -215,7 +243,7 @@ class AbstractPackerJob():
         """
         packer_task = rosetta.standard_packer_task(pose) 
         packer_task.restrict_to_repacking()
-       
+        print residues
         if residues != None:
             # Vector1 doesn't translate booleans correctly in 
             # TACC version of PyRosetta; need to build utility.vector1_bool() directly
@@ -225,6 +253,7 @@ class AbstractPackerJob():
                 if self.restrict_to_chain and not (pose.pdb_info().chain(i) in self.restrict_to_chain):
                     continue
                 else:
+                    print (i,i in residues)
                     pack_residues.append(i in residues)
             packer_task.restrict_to_residues(pack_residues)
         
@@ -694,14 +723,9 @@ class MutantddGPackerJob(AbstractPackerJob):
         # set up starting poses for reference and mutant
         self.ref_pose = rosetta.Pose()
         self.mut_pose = rosetta.Pose()
-        self.ref_pose.assign(self.mutate_aa(self.start_pose,self.residue,self.start_pose.residue(self.residue).name3()))
-        self.mut_pose.assign(self.mutate_aa(self.start_pose,self.residue,self.AA))
+        self.ref_pose.assign(self.start_pose)
+        self.mut_pose.assign(self.start_pose)
         
-        # Add coordinate constraints if specified
-        if self.min_cst_sd:
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
-
         # set up cst file constraints if specified; not sure about how this interacts w/ coord constraints?
         if self.constraint_file:
             if self.min_cst_sd:
@@ -712,6 +736,25 @@ class MutantddGPackerJob(AbstractPackerJob):
                 self.add_constraints_to_scorefxn()
             self.add_constraints_to_pose(self.ref_pose,self.constraint_file)
             self.add_constraints_to_pose(self.mut_pose,self.constraint_file)
+
+        # Add coordinate constraints if specified
+        # Note for future reference that this needs to be done *AFTER* setting file constraints
+        # (loading file constraints apparently deletes any existing constraints?)
+
+        if self.min_cst_sd:
+            rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
+            rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
+
+        self.mutate_aa(self.ref_pose,self.residue,self.start_pose.residue(self.residue).name3(),clone_pose=False)
+        self.mutate_aa(self.mut_pose,self.residue,self.AA,clone_pose=False)
+
+
+        if verbose >= 1:
+            print "Score function and Weights for %s:" % self.repr_str
+            print "Ref Pose:"
+            print self.scorefn.show(self.ref_pose)
+            print "Mut Pose:"
+            print self.scorefn.show(self.mut_pose)
 
         
         # Store initial pose scores

@@ -2,7 +2,8 @@
 # test run of CWB's MPI-capable PyRosetta module on TACC lonestar
 
 import sys,os,argparse
-import rosetta
+import pyrosetta as rosetta
+from pyrosetta.mpi import mpi_init
 import numpy as np
 from PyRosetta_TACC_MPI import *
 from mpi4py import MPI
@@ -24,6 +25,7 @@ def _main(args):
 
     start_pdb = parsed_args.start_pdb
     n_start_poses = parsed_args.n_poses
+    database = ""
 
     if parsed_args.database != "":
         database = " -database=" + parsed_args.database
@@ -72,7 +74,7 @@ def _main(args):
     if constraint_file:
         rosetta_options.append("-constraints:cst_fa_file %s" % constraint_file)
 
-    rosetta.mpi_init(extra_options=" ".join(rosetta_options))
+    mpi_init(extra_options=" ".join(rosetta_options))
 
     n_local_jobs = None
     

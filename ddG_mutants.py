@@ -2,7 +2,7 @@
 # test run of CWB's MPI-capable PyRosetta module on TACC lonestar
 
 import sys,os,re,argparse
-from rosetta import *
+from  pyrosetta import *
 from PyRosetta_TACC_MPI import *
 from mpi4py import MPI
 
@@ -27,7 +27,7 @@ def _main(args):
     parser.add_argument('--verbose','-v',default=1,help="How much output. >1 may cause IO issues on Stampede for large parallel runs")
 
     parsed_args = parser.parse_args()
-    print parsed_args
+    #print parsed_args
 
     start_pose_pdbs_dir = parsed_args.start_pose_pdbs_dir
     database = parsed_args.database
@@ -86,14 +86,17 @@ def _main(args):
         else:
             r_ch = re.search("(\d+)(\w+)",r)
             residues.append((int(r_ch.group(1)),r_ch.group(2)))
-    print residues
+    if verbose > 1:
+        print residues
     
     comm = MPI.COMM_WORLD
 
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    extra_options = []
+    extra_options = ["mute core.pack"]
+    if rank > 0:
+        extra_options = ["-mute all"]
 
     if constraint_file:
         extra_options.append("-constraints:cst_fa_file=%s" % constraint_file)
@@ -104,7 +107,8 @@ def _main(args):
 
     start_pose_pdbs = [start_pose_pdbs_dir + "/" + x for x in os.listdir(start_pose_pdbs_dir) if len(x) > 4 and x[-4:] == '.pdb']
     
-    print "Using %d replicate starting poses..." % (len(start_pose_pdbs),)
+    if rank == 0:
+        print "Using %d replicate starting poses..." % (len(start_pose_pdbs),)
 
     #start_poses.pack_all_poses()
     

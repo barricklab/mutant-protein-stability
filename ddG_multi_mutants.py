@@ -3,7 +3,7 @@
 
 import sys,os,re,argparse
 import itertools as it
-from rosetta import *
+from pyrosetta import *
 from PyRosetta_TACC_MPI import *
 from mpi4py import MPI
 

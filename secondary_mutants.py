@@ -21,7 +21,9 @@ def _main(args):
     parser.add_argument('--ddg_out_file','-o',default='ddg_out.txt',help='name of file to output final text (tab-delimited) table of results')
     parser.add_argument('--radius','-s',default=10,type=float,help="Radius defining the sphere of residues to mutate. Default=10 Angstroms")
     parser.add_argument('--replicates','-r',default=10,type=int,help='Replicate runs (per starting pose). Default=10')
-    parser.add_argument('--no_chain_restriction','-c',action='store_true',help="Don't restrict to only residues w/in the same chain as center residue")
+    parser.add_argument('--restrict_to_chain','-c',action='store_false',help="Don't restrict to only residues w/in the same chain as center residue")
+    parser.add_argument('--min_restrict_radius','-d',action='store_true',help='Only minimize residues within the packing radius (Default=FALSE)')
+    parser.add_argument('--min_cst_sd','-k',default=None,type=float,help='Use bb coord constraints w/ this std. dev. during minimization (recommend 0.5, default=None)')
     parser.add_argument('--dump_ref_pdb','-f',action='store_true')
     parser.add_argument('--dump_mut_pdb','-m',action='store_true')
     parser.add_argument('--dump_pdb_base','-b',default="ddg_out")
@@ -40,7 +42,9 @@ def _main(args):
     radius = parsed_args.radius
     ddg_out_file = parsed_args.ddg_out_file
     nreplicates = parsed_args.replicates
-    restrict_to_chain = parsed_args.no_chain_restriction
+    min_cst_sd = parsed_args.min_cst_sd
+    min_restrict_radius = parsed_args.min_restrict_radius
+    restrict_to_chain = parsed_args.restrict_to_chain
     dump_ref_pdb = parsed_args.dump_ref_pdb
     dump_mut_pdb = parsed_args.dump_mut_pdb
     dump_pdb_base = parsed_args.dump_pdb_base
@@ -111,7 +115,24 @@ def _main(args):
 
     #for (i,p) in enumerate(start_poses):
     	
-    cur_exp = SecondaryMutantScanExperimentRunner(start_pose_pdbs,rosetta_options,comm,center_residue,mutate_center_res_to,center_residue_chain,radius,center_residue_ref_pdb,AAs,nreplicates,restrict_to_chain,dump_ref_pdb=dump_ref_pdb,dump_mut_pdb=dump_mut_pdb,pdb_base=dump_pdb_base,PDB_res=True,verbose=verbose)
+    cur_exp = SecondaryMutantScanExperimentRunner(start_pose_pdbs,\
+                                                  rosetta_options,\
+                                                  comm,\
+                                                  center_residue,\
+                                                  mutate_center_res_to,\
+                                                  center_residue_chain,\
+                                                  radius,\
+                                                  center_residue_ref_pdb,\
+                                                  AAs,\
+                                                  nreplicates,\
+                                                  restrict_to_chain,\
+                                                  min_cst_sd=min_cst_sd,\
+                                                  min_restrict_radius=min_restrict_radius,\
+                                                  dump_ref_pdb=dump_ref_pdb,\
+                                                  dump_mut_pdb=dump_mut_pdb,\
+                                                  pdb_base=dump_pdb_base,\
+                                                  PDB_res=True,\
+                                                  verbose=verbose)
 
     cur_exp.scatter_job()
 

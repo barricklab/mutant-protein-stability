@@ -3,23 +3,25 @@ import os,sys,time,random
 import numpy as np
 import itertools as it
 #from rosetta import *
-import rosetta
+import pyrosetta
+from pyrosetta.rosetta.core import conformation
+from pyrosetta.rosetta.core import chemical
+from pyrosetta.mpi import mpi_init
 
 nAAs = ['ALA','ASP','LEU','ILE','VAL','GLY','SER','THR','PRO','GLU','ASN','GLN','LYS','ARG','TRP','PHE','TYR','HIS','CYS','MET']
-nsAAs = ['PRK','ACK','3IY','NOY','AZF','A69','B36','NBY'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
-NSAAS_PATCH = {'NBY':{'cognateAA':'TYR',
-                      'type':rosetta.VariantType.C2_AMINO_SUGAR},
-               'PRK':{'cognateAA':'LYS',
-                      'type':rosetta.VariantType.C3_AMINO_SUGAR},
-               'ACK':{'cognateAA':'LYS',
-                      'type':rosetta.VariantType.ACETYLATION},
-               'PHS':{'cognateAA':'SER',
-                      'type':rosetta.VariantType.PHOSPHORYLATION},
-               'PHT':{'cognateAA':'THR',
-                      'type':rosetta.VariantType.PHOSPHORYLATION},
-               'PHY':{'cognateAA':'TYR',
-                      'type':rosetta.VariantType.PHOSPHORYLATION}}
+nsAAs = ['PRK','ACK','3IY','NOY','AZF','A69','B36','NBY','PHS','PHT','PHY','SOY','MMD','MMS','MMY','MMK'] # A69 = 3-aminotyrosine, B36 = 5-hydroxytryptophan
 
+NSAAS_PATCH = {} # Need to get rid of refs to this in code
+"""
+'ACK':{'cognateAA':'LYS',
+                      'type':chemical.VariantType.ACETYLATION},
+               'PHS':{'cognateAA':'SER',
+                      'type':chemical.VariantType.PHOSPHORYLATION},
+               'PHT':{'cognateAA':'THR',
+                      'type':chemical.VariantType.PHOSPHORYLATION},
+               'PHY':{'cognateAA':'TYR',
+                      'type':chemical.VariantType.PHOSPHORYLATION}}
+"""
 #=========================================================================
 #
 # ABSTRACT CLASSES - DO NOT call directly!
@@ -52,13 +54,13 @@ class AbstractExperimentRunner():
 
     def setup_MPI(self,comm):
         if not comm:
-            rosetta.init(extra_options=self.rosetta_init_options)
+            pyrosetta.init(extra_options=self.rosetta_init_options)
         else:
             self.comm = comm
             self.size = comm.Get_size()
             self.rank = comm.Get_rank()
         # keep a list of Job objects
-            rosetta.mpi_init(extra_options=self.rosetta_init_options)
+            mpi_init(extra_options=self.rosetta_init_options)
             
     def scatter_job(self):
         local_jobs = self.comm.scatter(self.jobs,root=0)
@@ -121,7 +123,7 @@ class AbstractPackerJob():
         self.restrict_to_chain = restrict_to_chain
         self.verbose = verbose
         # a PyRosetta ScoreFunction object, defaults to mm_std    
-        self.scorefn = rosetta.create_score_function(scorefn)        
+        self.scorefn = pyrosetta.create_score_function(scorefn)        
         self.constraint_file = constraint_file
 
     def mutate_aa(self,pose,residue,aa_name,orient_bb=True,repack_sidechain=True,clone_pose=True):
@@ -135,7 +137,7 @@ class AbstractPackerJob():
 
         mut_pose = pose
         if clone_pose:
-            mut_pose = rosetta.Pose()
+            mut_pose = pyrosetta.Pose()
             mut_pose.assign(pose)
 
         res = mut_pose.residue(residue)
@@ -149,13 +151,13 @@ class AbstractPackerJob():
             except AttributeError:
                 disulfide_partner = res.residue_connection_partner(
                     res.n_current_residue_connections())
-            temp_pose = rosetta.Pose()
+            temp_pose = pyrosetta.Pose()
             temp_pose.assign(mut_pose)
             # (Packing causes seg fault if current CYS residue is not
             # also converted before mutating.)
-            rosetta.change_cys_state(residue, 'CYS',\
+            conformation.change_cys_state(residue, 'CYS',\
                              temp_pose.conformation())
-            rosetta.change_cys_state(disulfide_partner, 'CYS',\
+            conformation.change_cys_state(disulfide_partner, 'CYS',\
                              temp_pose.conformation())
             mut_pose = temp_pose
 
@@ -163,7 +165,7 @@ class AbstractPackerJob():
             # Get a Residue object for the desired ncAA
         mut_res_type = None
         rts = None
-        chm = rosetta.core.chemical.ChemicalManager.get_instance()
+        chm = chemical.ChemicalManager.get_instance()
         
         try:
             rts = chm.residue_type_set("fa_standard").get()
@@ -181,36 +183,36 @@ class AbstractPackerJob():
             mut_res_type = rts.get_residue_type_with_variant_added(cognate_res_type,NSAAS_PATCH[aa_name]['type'])            
         else:
             # replace the target residue with the ncAA
-            #if residue == 1 or residue == mut_pose.n_residue():
+            #if residue == 1 or residue == mut_pose.total_residue():
             #    aa_name = aa_name + "_p"
             mut_res_type = rts.name_map(aa_name)
 
         if residue == 1:
             try: 
-                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,rosetta.VariantType.LOWER_TERMINUS_VARIANT)                
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,chemical.VariantType.LOWER_TERMINUS_VARIANT)                
             except AttributeError:
                 mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"LOWER_TERMINUS")
-        elif residue == mut_pose.n_residue():
+        elif residue == mut_pose.total_residue():
             try:
-                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,rosetta.VariantType.UPPER_TERMINUS_VARIANT)                
+                mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,chemical.VariantType.UPPER_TERMINUS_VARIANT)                
             except AttributeError:
                 mut_res_type = rts.get_residue_type_with_variant_added(mut_res_type,"UPPER_TERMINUS")
-        mut_res = rosetta.core.conformation.ResidueFactory.create_residue( mut_res_type )
+        mut_res = conformation.ResidueFactory.create_residue( mut_res_type )
         mut_pose.replace_residue(residue,mut_res,orient_backbone=orient_bb)
 
         # Highly recommended to repack the sidechain after calling Pose.replace_residue()...otherwise
         # later packing steps get caught in weird local minima :'(
-        tmp_verbose = self.verbose
-        self.verbose=2
+        #tmp_verbose = self.verbose
+        #self.verbose=2
         if repack_sidechain:
             # annoying but apparently has to be done this way?...
-            repack_task = rosetta.standard_packer_task(mut_pose)
+            repack_task = pyrosetta.rosetta.core.pack.task.TaskFactory.create_packer_task(mut_pose)
             repack_task.restrict_to_repacking()
-            repack_res_list = rosetta.utility.vector1_bool()
-            for i in range(1,mut_pose.n_residue()+1):
+            repack_res_list = pyrosetta.rosetta.utility.vector1_bool()
+            for i in range(1,mut_pose.total_residue()+1):
                 repack_res_list.append(i == residue)
             repack_task.restrict_to_residues(repack_res_list)
-            sidechain_PackRotamersMover = rosetta.PackRotamersMover(self.scorefn,repack_task)
+            sidechain_PackRotamersMover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,repack_task)
             
             initial_mut_score = self.scorefn(mut_pose)
             if self.verbose > 1:
@@ -221,7 +223,7 @@ class AbstractPackerJob():
             repacked_mut_score = self.scorefn(mut_pose)
             if self.verbose > 1:
                 print "initial E = %f repacked E = %f" % (initial_mut_score,repacked_mut_score)
-        self.verbose=tmp_verbose
+        #self.verbose=tmp_verbose
 
         return mut_pose
 
@@ -241,19 +243,20 @@ class AbstractPackerJob():
     
         Did this to avoid PackerTask.temporarily_* methods which apparently we're not supposed to use
         """
-        packer_task = rosetta.standard_packer_task(pose) 
+        packer_task = pyrosetta.rosetta.core.pack.task.TaskFactory.create_packer_task(pose)
         packer_task.restrict_to_repacking()
-        print residues
+        if self.verbose > 1:
+            print residues
         if residues != None:
             # Vector1 doesn't translate booleans correctly in 
             # TACC version of PyRosetta; need to build utility.vector1_bool() directly
-            #pack_residues = Vector1([x in residues for x in range(1,pose.n_residue())])
-            pack_residues = rosetta.utility.vector1_bool()
-            for i in range(1,pose.n_residue() + 1):
+            #pack_residues = Vector1([x in residues for x in range(1,pose.total_residue())])
+            pack_residues = pyrosetta.rosetta.utility.vector1_bool()
+            for i in range(1,pose.total_residue() + 1):
                 if self.restrict_to_chain and not (pose.pdb_info().chain(i) in self.restrict_to_chain):
                     continue
                 else:
-                    print (i,i in residues)
+                    #print (i,i in residues)
                     pack_residues.append(i in residues)
             packer_task.restrict_to_residues(pack_residues)
         
@@ -265,9 +268,9 @@ class AbstractPackerJob():
         """
         centerAA_CA = pose.residue(centerAA).xyz('CA')
         repack_residues = []
-        if self.verbose >= 2:
+        if self.verbose > 2:
             print >> sys.stderr, "residue_CA_in_radius: centerAA=%d, restrict_to_chain=%s" % (centerAA,str(self.restrict_to_chain))
-        for i in range(1,pose.n_residue()):
+        for i in range(1,pose.total_residue()):
             # This is a little fudgy since restrict_to_chain could be either a list or a string depending on the calling child class
             # 
             # Note that this may break if chains are not single characters
@@ -275,7 +278,7 @@ class AbstractPackerJob():
                 continue
             test_CA = pose.residue(i).xyz('CA')
             displacement = centerAA_CA - test_CA
-            distance = displacement.norm
+            distance = displacement.norm()
             if distance <= radius:
                 repack_residues.append(i)
     
@@ -302,8 +305,8 @@ class AbstractPackerJob():
             n_minimization_steps MinMover moves executed sequentially
         """
         
-        seqmover = rosetta.SequenceMover()
-        packmover = rosetta.PackRotamersMover(self.scorefn,packertask)
+        seqmover = pyrosetta.rosetta.protocols.moves.SequenceMover()
+        packmover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,packertask)
 
         for i in range(0,n_packing_steps):
             #pack_repmover = rosetta.RepeatMover(packmover,n_packing_steps)
@@ -316,8 +319,8 @@ class AbstractPackerJob():
 
         #print >> sys.stderr, seqmover
         
-        mc = rosetta.MonteCarlo(pose,self.scorefn,kT)
-        packmin_trial_mover = rosetta.TrialMover(seqmover,mc)
+        mc = pyrosetta.rosetta.protocols.moves.MonteCarlo(pose,self.scorefn,kT)
+        packmin_trial_mover = pyrosetta.rosetta.protocols.moves.TrialMover(seqmover,mc)
     
         return seqmover
     
@@ -335,17 +338,17 @@ class AbstractPackerJob():
     def build_movemap(self,pose,restrict_radius_center=None,restrict_radius=None,restrict_residues=None):
         if not restrict_radius:
             restrict_radius = self.repack_radius
-        mm = rosetta.MoveMap()
+        mm = pyrosetta.rosetta.core.kinematics.MoveMap()
         mm.set_bb(False)
         mm.set_chi(False)
         mm.set_jump(False)
         residues = []
         if self.restrict_to_chain:
-            for i in range(1,pose.n_residue()):
+            for i in range(1,pose.total_residue()):
                 if pose.pdb_info().chain(i) in self.restrict_to_chain:
                     residues.append(i)
         else:
-            residues = range(1,pose.n_residue() + 1)
+            residues = range(1,pose.total_residue() + 1)
         
         if restrict_radius_center:
             possible_residues = self.residue_CAs_in_radius(pose,restrict_radius_center,restrict_radius)
@@ -361,14 +364,13 @@ class AbstractPackerJob():
         
         return mm
         
-    def make_minmover(self,mintype,movemap,pose,tolerance=0.001):
+    def make_minmover(self,mintype,movemap,pose):
         # Set up a Minimization mover using the mm_std score function
-        min_mover = rosetta.MinMover()
+        min_mover = pyrosetta.rosetta.protocols.simple_moves.MinMover()
         min_mover.movemap(movemap)
         min_scorefn = self.scorefn.clone()
         if self.min_cst_sd:
-            min_scorefn.set_weight(rosetta.core.scoring.coordinate_constraint,1.0) # arbitrary weight for now
-        min_mover.tolerance=tolerance
+            min_scorefn.set_weight(pyrosetta.rosetta.core.scoring.coordinate_constraint,1.0) # arbitrary weight for now
         min_mover.score_function(min_scorefn)
         min_mover.min_type(mintype)
         
@@ -376,11 +378,11 @@ class AbstractPackerJob():
 
     def add_constraints_to_scorefxn(self,constraint_types=None,weights=None,default_weight=0.1):
         if not constraint_types:
-            constraint_types = [rosetta.atom_pair_constraint, \
-                                    rosetta.angle_constraint, \
-                                    rosetta.dihedral_constraint, \
-                                    rosetta.coordinate_constraint, \
-                                    rosetta.constant_constraint]
+            constraint_types = [pyrosetta.rosetta.core.scoring.constraints.atom_pair_constraint, \
+                                pyrosetta.rosetta.core.scoring.constraints.angle_constraint, \
+                                pyrosetta.rosetta.core.scoring.constraints.dihedral_constraint, \
+                                pyrosetta.rosetta.core.scoring.constraints.coordinate_constraint, \
+                                pyrosetta.rosetta.core.scoring.constraints.constant_constraint]
         if not weights:
             weights = [default_weight,] * len(constraint_types)
 
@@ -389,9 +391,11 @@ class AbstractPackerJob():
                 self.scorefn.set_weight(constraint, weight)
     
     def add_constraints_to_pose(self,pose,constraint_file):
-        setup = rosetta.ConstraintSetMover()
-        setup.constraint_file(constraint_file)
-        setup.apply(pose)
+        # Still not sure how to implement this in PyRosetta4 ?
+        #setup = rosetta.ConstraintSetMover()
+        #setup.constraint_file(constraint_file)
+        #setup.apply(pose)
+        pyrosetta.rosetta.core.scoreing.constraints.add_constraints_from_cmdline_to_pose(pose)
 
 
         
@@ -462,11 +466,11 @@ class MutagenesisExperimentRunner(AbstractExperimentRunner):
 
         split_jobs = [jobs[i:i+job_div] for i in range(0,job_div_procs*job_div,job_div)]
         split_jobs.extend([jobs[i:i+(job_div+1)] for i in range(job_div_procs*job_div,len(jobs),job_div+1)])
-        if self.verbose >=1:
-            print "*********************  n_jobs: %d job_div: %d job_rem: %d" % (len(jobs),job_div,job_rem)
+        #if self.verbose >=1:
+        #    print "*********************  n_jobs: %d job_div: %d job_rem: %d" % (len(jobs),job_div,job_rem)
         #if job_rem > 0:
         #    split_jobs.append(jobs[-job_rem:])
-            print >> sys.stderr,  "*********** split_jobs: %d" % (len(split_jobs),)
+        #    print >> sys.stderr,  "*********** split_jobs: %d" % (len(split_jobs),)
         
         return split_jobs    
     
@@ -510,7 +514,7 @@ class MutantCombinationsExperimentRunner(AbstractExperimentRunner):
     #
     # Pass in mutant_list, where each list item is a mutant represented by a list of tuples of the form (residue,AA)
     #   e.g. to test a mutant with Arg234 -> Ser, Tyr397 -> 3IY we'd do [[(234,'ARG'),(397,'3IY')],...]
-    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,mutant_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,min_cst_sd=None,min_restrict_radius=False,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base="",verbose=1):
+    def __init__(self,start_pose_pdbs,rosetta_init_options,comm,mutant_list=[],nreps=50,restrict_to_chain=False,max_pack_rounds=25,min_cst_sd=None,min_restrict_radius=False,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base="",verbose=1,constraint_file=None):
 
         self.packer_job_class = MultiMutantPackerJob
 #        AbstractExperimentRunner.__init__(self,start_pose_pdbs,rosetta_init_options,restrict_to_chain,max_pack_rounds,min_cst_sd,min_restrict_radius,PDB_res,dump_ref_pdb,dump_mut_pdb,pdb_base)
@@ -525,7 +529,8 @@ class MutantCombinationsExperimentRunner(AbstractExperimentRunner):
                                               dump_ref_pdb=dump_ref_pdb,\
                                               dump_mut_pdb=dump_mut_pdb,\
                                               pdb_base=pdb_base,\
-                                              verbose=verbose)
+                                              verbose=verbose,\
+                                              constraint_file=constraint_file)
         self.setup_MPI(comm)
         self.setup_jobs(mutant_list,nreps)
 
@@ -598,14 +603,14 @@ class SecondaryMutantScanExperimentRunner(MutantCombinationsExperimentRunner):
     def __init__(self,start_pose_pdbs,rosetta_init_options,comm,center_residue,center_residue_AA,center_residue_chain,mutate_radius,center_res_ref_pose,mutate_secondary_to_AAs,nreps=50,restrict_to_chain=False,max_pack_rounds=25,min_cst_sd=None,min_restrict_radius=False,PDB_res=False,dump_ref_pdb=False,dump_mut_pdb=False,pdb_base="",verbose=1):
 
         # init so we can compute the residues to mutate; will re-initialize via AbstractExperimentRunner after all class-specific __init__ business is done
-        rosetta.mpi_init(extra_options=rosetta_init_options)
+        mpi_init(extra_options=rosetta_init_options)
 
         self.center_res = None
         self.center_residue_AA = center_residue_AA
         self.mutate_radius = mutate_radius
         self.center_residue_chain = center_residue_chain
         # Set up to use center residue coordinates from a single pose for consistency for now; could change to pass this off to individual poses
-        self.center_res_ref_pose = rosetta.pose_from_file(center_res_ref_pose)
+        self.center_res_ref_pose = pyrosetta.pose_from_file(center_res_ref_pose)
         self.mutate_secondary_to_AAs = mutate_secondary_to_AAs
         self.verbose = verbose
 
@@ -617,20 +622,24 @@ class SecondaryMutantScanExperimentRunner(MutantCombinationsExperimentRunner):
         radius_list = self.residue_CAs_in_radius(self.center_res_ref_pose,self.center_residue_chain,self.center_res,self.mutate_radius)
 
         mutant_list = [[(self.center_res,self.center_residue_chain,self.center_residue_AA),(x,self.center_residue_chain,y)] for (x,y) in it.product(radius_list,self.mutate_secondary_to_AAs) if x != self.center_res] 
+        if self.verbose >= 2:
+            print >> sys.stderr, "SecondaryMutantScanExperimentRunner: radius_list=%s mutant_list=%s center_res_ref_pose=%s center_residue_chain=%s center_res=%s mutate_radius=%s" % (str(radius_list),str(mutant_list),center_res_ref_pose,str(self.center_residue_chain),str(self.center_res),str(self.mutate_radius))
 
-        #print >> sys.stderr, "SecondaryMutantScanExperimentRunner: mutant_list=%s" % (str(mutant_list))
-
-        MutantCombinationsExperimentRunner.__init__(self,start_pose_pdbs,rosetta_init_options,comm,mutant_list=mutant_list,\
-                                                        nreps=nreps,\
-                                                        restrict_to_chain=restrict_to_chain,\
-                                                        max_pack_rounds=max_pack_rounds,\
-                                                        min_cst_sd=min_cst_sd,\
-                                                        min_restrict_radius=min_restrict_radius,\
-                                                        PDB_res=False,\
-                                                        dump_ref_pdb=dump_ref_pdb,\
-                                                        dump_mut_pdb=dump_mut_pdb,\
-                                                        pdb_base=pdb_base,\
-                                                        verbose=verbose)
+        MutantCombinationsExperimentRunner.__init__(self,\
+                                                    start_pose_pdbs,\
+                                                    rosetta_init_options,\
+                                                    comm,\
+                                                    mutant_list=mutant_list,\
+                                                    nreps=nreps,\
+                                                    restrict_to_chain=restrict_to_chain,\
+                                                    max_pack_rounds=max_pack_rounds,\
+                                                    min_cst_sd=min_cst_sd,\
+                                                    min_restrict_radius=min_restrict_radius,\
+                                                    PDB_res=False,\
+                                                    dump_ref_pdb=dump_ref_pdb,\
+                                                    dump_mut_pdb=dump_mut_pdb,\
+                                                    pdb_base=pdb_base,\
+                                                    verbose=verbose)
 
     def residue_CAs_in_radius(self,center_pose,center_chain,centerAA,radius):
         """
@@ -639,8 +648,8 @@ class SecondaryMutantScanExperimentRunner(MutantCombinationsExperimentRunner):
         centerAA_CA = center_pose.residue(centerAA).xyz('CA')
         repack_residues = []
         if self.verbose >= 2:
-            print "SecondaryMutantScanExperimentRunner.residue_CA_in_radius: centerAA=%d, restrict_to_chain=%s" % (centerAA,str(center_chain))
-        for i in range(1,center_pose.n_residue()):
+            print "SecondaryMutantScanExperimentRunner.residue_CA_in_radius: centerAA=%d, restrict_to_chain=%s total_res=%s" % (centerAA,str(center_chain),str(center_pose.total_residue()))
+        for i in range(1,center_pose.total_residue()):
             # This is a little fudgy since restrict_to_chain could be either a list or a string depending on the calling child class
             # 
             # Note that this may break if chains are not single characters
@@ -648,7 +657,7 @@ class SecondaryMutantScanExperimentRunner(MutantCombinationsExperimentRunner):
                 continue
             test_CA = center_pose.residue(i).xyz('CA')
             displacement = centerAA_CA - test_CA
-            distance = displacement.norm
+            distance = displacement.norm()
             if distance <= radius:
                 repack_residues.append(i)
     
@@ -699,10 +708,10 @@ class MutantddGPackerJob(AbstractPackerJob):
         start_pose_in = None
         # GAAAAAAAH Why do they not make these backwards-compatible >8-O!!!
         try:
-            start_pose_in = rosetta.pose_from_pdb(self.start_pose_pdb)
+            start_pose_in = pyrosetta.pose_from_pdb(self.start_pose_pdb)
         except AttributeError:
-            start_pose_in = rosetta.pose_from_file(self.start_pose_pdb)
-        self.start_pose = rosetta.Pose()
+            start_pose_in = pyrosetta.pose_from_file(self.start_pose_pdb)
+        self.start_pose = pyrosetta.Pose()
         self.start_pose.assign(start_pose_in)
         self.residue = None
         if PDB_res:
@@ -721,17 +730,17 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.n_min_steps = n_min_steps
 
         # set up starting poses for reference and mutant
-        self.ref_pose = rosetta.Pose()
-        self.mut_pose = rosetta.Pose()
+        self.ref_pose = pyrosetta.Pose()
+        self.mut_pose = pyrosetta.Pose()
         self.ref_pose.assign(self.start_pose)
         self.mut_pose.assign(self.start_pose)
         
         # set up cst file constraints if specified; not sure about how this interacts w/ coord constraints?
         if self.constraint_file:
             if self.min_cst_sd:
-                self.add_constraints_to_scorefxn(constraint_types=[rosetta.atom_pair_constraint, \
-                                                                       rosetta.angle_constraint, \
-                                                                       rosetta.dihedral_constraint])
+                self.add_constraints_to_scorefxn(constraint_types=[pyrosetta.rosetta.core.scoring.constraints.atom_pair_constraint, \
+                                                                   pyrosetta.rosetta.core.scoring.constraints.angle_constraint, \
+                                                                   pyrosetta.rosetta.core.scoring.constraints.dihedral_constraint])
             else:
                 self.add_constraints_to_scorefxn()
             self.add_constraints_to_pose(self.ref_pose,self.constraint_file)
@@ -742,14 +751,14 @@ class MutantddGPackerJob(AbstractPackerJob):
         # (loading file constraints apparently deletes any existing constraints?)
 
         if self.min_cst_sd:
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
+            pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
+            pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
 
         self.mutate_aa(self.ref_pose,self.residue,self.start_pose.residue(self.residue).name3(),clone_pose=False)
         self.mutate_aa(self.mut_pose,self.residue,self.AA,clone_pose=False)
 
 
-        if verbose >= 1:
+        if self.verbose > 1:
             print "Score function and Weights for %s:" % self.repr_str
             print "Ref Pose:"
             print self.scorefn.show(self.ref_pose)
@@ -782,8 +791,8 @@ class MutantddGPackerJob(AbstractPackerJob):
         self.ref_min_mover = self.make_minmover(mintype,self.ref_min_movemap,self.ref_pose)
         self.mut_min_mover = self.make_minmover(mintype,self.mut_min_movemap,self.mut_pose)
             
-        self.ref_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.ref_packertask)
-        self.mut_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.mut_packertask)
+        self.ref_pack_mover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,self.ref_packertask)
+        self.mut_pack_mover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,self.mut_packertask)
 
         self.ref_mover = self.make_CompoundMover([self.ref_pack_mover,self.ref_min_mover],[self.n_pack_steps,self.n_min_steps])
         self.mut_mover = self.make_CompoundMover([self.mut_pack_mover,self.mut_min_mover],[self.n_pack_steps,self.n_min_steps])
@@ -882,13 +891,8 @@ class MultiMutantPackerJob(AbstractPackerJob):
         # Mutant definition - residue to mutate, AA to mutate to, and replicate number
         self.start_pose_pdb = start_pose_pdb
         self.start_pose_name = os.path.split(start_pose_pdb)[1]
-        start_pose_in = None
-        # GAAAAAAAH Why do they not make these backwards-compatible >8-O!!!
-        try:
-            start_pose_in = rosetta.pose_from_pdb(self.start_pose_pdb)
-        except AttributeError:
-            start_pose_in = rosetta.pose_from_file(self.start_pose_pdb)
-        self.start_pose = rosetta.Pose()
+        start_pose_in = pyrosetta.pose_from_file(self.start_pose_pdb)
+        self.start_pose = pyrosetta.Pose()
         self.start_pose.assign(start_pose_in)
         self.mut_str = None
         self.repr_str = None
@@ -899,8 +903,8 @@ class MultiMutantPackerJob(AbstractPackerJob):
         self.n_pack_steps = n_pack_steps
         self.n_min_steps = n_min_steps
         self.replicate = replicate
-        self.ref_pose = rosetta.Pose()
-        self.mut_pose = rosetta.Pose()
+        self.ref_pose = pyrosetta.Pose()
+        self.mut_pose = pyrosetta.Pose()
 
         self.setup_poses()
 
@@ -919,8 +923,8 @@ class MultiMutantPackerJob(AbstractPackerJob):
         self.ref_min_mover = self.make_minmover(mintype,self.ref_min_movemap,self.ref_pose)
         self.mut_min_mover = self.make_minmover(mintype,self.mut_min_movemap,self.mut_pose)
             
-        self.ref_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.ref_packertask)
-        self.mut_pack_mover = rosetta.PackRotamersMover(self.scorefn,self.mut_packertask)
+        self.ref_pack_mover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,self.ref_packertask)
+        self.mut_pack_mover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,self.mut_packertask)
 
         self.ref_mover = self.make_CompoundMover([self.ref_pack_mover,self.ref_min_mover],[self.n_pack_steps,self.n_min_steps])
         self.mut_mover = self.make_CompoundMover([self.mut_pack_mover,self.mut_min_mover],[self.n_pack_steps,self.n_min_steps])
@@ -940,9 +944,9 @@ class MultiMutantPackerJob(AbstractPackerJob):
 
         repr_str = ""
 
-        cur_ref_pose = rosetta.Pose()
+        cur_ref_pose = pyrosetta.Pose()
         cur_ref_pose.assign(self.start_pose)
-        cur_mut_pose = rosetta.Pose()
+        cur_mut_pose = pyrosetta.Pose()
         cur_mut_pose.assign(self.start_pose)
 
         pack_residues = []
@@ -969,8 +973,8 @@ class MultiMutantPackerJob(AbstractPackerJob):
         self.mut_pose.assign(cur_mut_pose)
 
         if self.min_cst_sd:
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
-            rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
+            pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
+            pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
 
         # Set up PackerTasks and Movers 
         self.ref_packertask = self.make_packer_task_with_residues(self.ref_pose,pack_residues)
@@ -1049,11 +1053,11 @@ class PackSinglePoseJob(AbstractPackerJob):
         AbstractPackerJob.__init__(self,convergence_fn,conv_threshold,repack_radius,scorefn,mintype,max_rounds,restrict_to_chain,constraint_file=constraint_file)
         
         try:
-            in_pose = rosetta.pose_from_file(in_pdb)
+            in_pose = pyrosetta.pose_from_file(in_pdb)
         except AttributeError:
             in_pose = rosetta.pose_from_pdb(in_pdb)
         self.kT = kT
-        self.pose = rosetta.Pose()
+        self.pose = pyrosetta.Pose()
         self.pose.assign(in_pose)
 
         if self.constraint_file:
@@ -1073,7 +1077,7 @@ class PackSinglePoseJob(AbstractPackerJob):
         if MCmover:
             self.mover = self.make_packmin_mover(self.pose,self.packer_task,self.min_mover,self.n_pack_steps,self.n_min_steps,kT=self.kT)
         else:
-            pack_mover = rosetta.PackRotamersMover(self.scorefn,self.packer_task)
+            pack_mover = pyrosetta.rosetta.protocols.simple_moves.PackRotamersMover(self.scorefn,self.packer_task)
             self.mover = self.make_CompoundMover([pack_mover,self.min_mover],[self.n_pack_steps,self.n_min_steps])
             
     def pack_pose(self):
@@ -1105,18 +1109,18 @@ class FastRelaxPoseJob(AbstractPackerJob):
         
         AbstractPackerJob.__init__(self,scorefn=scorefn,restrict_to_chain=restrict_to_chain,verbose=1,constraint_file=constraint_file)
         
-        in_pose = rosetta.pose_from_file(in_pdb)
+        in_pose = pyrosetta.pose_from_file(in_pdb)
 
         self.pose = rosetta.Pose()
         self.pose.assign(in_pose)
         if self.constraint_file:
-            self.add_constraints_to_scorefxn(constraint_types=[rosetta.atom_pair_constraint, \
-                                                                   rosetta.angle_constraint, \
-                                                                   rosetta.dihedral_constraint])
+            self.add_constraints_to_scorefxn(constraint_types=[pyrosetta.rosetta.core.scoring.constraints.atom_pair_constraint, \
+                                                               pyrosetta.rosetta.core.scoring.constraints.angle_constraint, \
+                                                               pyrosetta.rosetta.core.scoring.constraints.dihedral_constraint])
             self.add_constraints_to_pose(self.pose,self.constraint_file)
         self.start_score = self.scorefn(self.pose)
         self.rank = MPI_rank
-        self.rlx_mover = rosetta.FastRelax(self.scorefn)
+        self.rlx_mover = pyrosetta.rosetta.protocols.relax.FastRelax(self.scorefn)
         self.rlx_mover.set_movemap(self.build_movemap(self.pose))
         self.final_score = None
 
@@ -1134,41 +1138,6 @@ class FastRelaxPoseJob(AbstractPackerJob):
 
     def dump_pose(self,outfile):
         self.pose.dump_pdb(outfile)
-
-
-
-def MPIJobDistributor(njobs, fun):
-
-    comm = MPI.COMM_WORLD
-
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    myjobs = []
-
-    if rank == 0:
-        jobs = range(njobs)
-        jobs.extend( [None]*(size - njobs % size) )
-        n = len(jobs)/size
-        for i in range(size):
-            queue = []  # list of jobs for individual cpu
-            for j in range(n):
-                queue.append(jobs[j*size+i])
-
-            if( i == 0 ):
-                myjobs = queue
-            else:
-                # now sending the queue to the process
-                logger.info('Sending %s to node %s' % (queue, i) )
-                comm.send(queue, dest=i)
-    else:
-        # getting decoy lists
-        myjobs = comm.recv(source=0)
-
-    logger.info('Node %s, got queue:%s' % (rank, myjobs) )
-
-    for j in myjobs:
-        if j is not None: fun(j)
 
 if __name__ == "__main__":
     _main(sys.argv[1:])

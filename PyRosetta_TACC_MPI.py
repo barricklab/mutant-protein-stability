@@ -754,6 +754,15 @@ class MutantddGPackerJob(AbstractPackerJob):
             pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.ref_pose,self.min_cst_sd,False)
             pyrosetta.rosetta.core.scoring.constraints.add_coordinate_constraints(self.mut_pose,self.min_cst_sd,False)
 
+        
+        # This is a hack to deal with chirality problems for some nsAAs when mutating from Glycine
+        #
+        #    Pose.replace_residue() seems to place sidechain correctly 
+        #    for ALA, and from any chiral AA to the nsAAs so mutate GLY to ALA first
+        #if  self.start_pose.residue(self.residue).name3() == "GLY":
+        #    self.mutate_aa(self.ref_pose,self.residue,"ALA",clone_pose=False)
+        #    self.mutate_aa(self.mut_pose,self.residue,"ALA",clone_pose=False)
+
         self.mutate_aa(self.ref_pose,self.residue,self.start_pose.residue(self.residue).name3(),clone_pose=False)
         self.mutate_aa(self.mut_pose,self.residue,self.AA,clone_pose=False)
 
